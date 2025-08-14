@@ -1,10 +1,86 @@
-# Concurrent Programming in Go with AI Support
+# Advice Rating Tool - Concurrent Programming in Go with AI Support
 
-This is the repository for the LinkedIn Learning course `Concurrent Programming in Go with AI Support`. The full course is available from [LinkedIn Learning][lil-course-url].
+This is an agentic REPL tool that rates user-submitted advice using multiple expert AI agents running concurrently. The tool demonstrates concurrent programming patterns in Go while providing practical advice evaluation.
 
 ![Concurrent Programming in Go with AI Support][lil-thumbnail-url]
 
-_See the readme file in the main branch for updated instructions and information._
+## Features
+
+- **Interactive REPL Interface**: Enter advice and get real-time expert analysis
+- **Multiple Expert Agents**: Six specialized agents evaluate advice from different perspectives:
+  - **Career Agent**: Rates advice for career impact (0-10 or -1 if not applicable)
+  - **BestFriend Agent**: Rates advice for interpersonal relationships
+  - **Financial Agent**: Rates advice for financial success
+  - **TechSupport Agent**: Rates advice for technology accuracy
+  - **Dietician Agent**: Rates advice for health and diet
+  - **Lawyer Agent**: Rates advice for legal accuracy
+- **Advice Summarizer**: Provides final rating (terrible/bad/neutral/good/fantastic)
+- **Concurrent Processing**: All expert agents run in parallel using Go goroutines
+- **Structured Output**: Uses OpenAI's structured output with JSON schemas
+
+## Architecture
+
+The application uses a fan-out/fan-in pattern:
+1. User input is distributed to all expert agents simultaneously
+2. Each agent processes the advice concurrently
+3. Results are collected and passed to the summarizer agent
+4. Final rating and summary are presented to the user
+
+## Quick Start
+
+1. **Set up your OpenAI API key**:
+   ```bash
+   export OPENAI_API_KEY="your-api-key-here"
+   # OR create a .env file with: OPENAI_API_KEY=your-api-key-here
+   ```
+
+2. **Run the application**:
+   ```bash
+   go run main.go
+   ```
+
+3. **Start rating advice**:
+   ```
+   Enter advice: Always invest in index funds for long-term growth
+   ```
+
+4. **View expert analysis** and final rating
+
+5. **Type 'quit' to exit**
+
+## Example Usage
+
+```
+🤖 Advice Rating Tool
+Enter advice to get it rated by expert agents, or 'quit' to exit.
+
+Enter advice: Drink 8 glasses of water daily
+Status: Analyzing advice with expert agents...
+Status: Getting Career opinion...
+Status: Getting BestFriend opinion...
+Status: Getting Financial opinion...
+Status: Getting TechSupport opinion...
+Status: Getting Dietician opinion...
+Status: Getting Lawyer opinion...
+Status: Summarizing expert opinions...
+Status: Analysis complete!
+
+=== EXPERT RATINGS ===
+
+Career: -1 - This advice is not related to career development
+BestFriend: -1 - This advice doesn't apply to interpersonal relationships
+Financial: -1 - This advice is not related to financial matters
+TechSupport: -1 - This advice is not technology related
+Dietician: 8 - Good general hydration advice, though individual needs vary
+Lawyer: -1 - This advice is not related to legal matters
+
+=== FINAL ASSESSMENT ===
+Final Rating: GOOD
+
+Summary: Only the dietician provided a rating (8/10) as this advice specifically relates to health and hydration. The advice is generally sound for maintaining proper hydration, though individual water needs can vary based on activity level, climate, and health conditions.
+
+Analysis completed in 3.2s
+```
 
 ## Instructions
 

@@ -3,11 +3,11 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
 
-// WorkflowResult represents the output from a single agent in the workflow.
 type WorkflowResult struct {
 	AgentName string
 	Output    string
@@ -15,14 +15,12 @@ type WorkflowResult struct {
 	Duration  time.Duration
 }
 
-// WorkflowResult represents the output from a single agent in the workflow.
 type WorkflowStats struct {
 	TotalDuration time.Duration
 	AgentStats    map[string]time.Duration
 }
 
-// Workflow orchestrates the execution of multiple agents in a concurrent pipeline.
-type Workflow struct {
+type AdviceWorkflow struct {
 	apiKey       string
 	ctx          context.Context
 	statusUpdate func(string)
@@ -30,9 +28,8 @@ type Workflow struct {
 	stats        *WorkflowStats
 }
 
-// NewWorkflow creates a new workflow instance with the given API key, context, and status update callback.
-func NewWorkflow(apiKey string, ctx context.Context, statusUpdate func(string)) *Workflow {
-	return &Workflow{
+func NewAdviceWorkflow(apiKey string, ctx context.Context, statusUpdate func(string)) *AdviceWorkflow {
+	return &AdviceWorkflow{
 		apiKey:       apiKey,
 		ctx:          ctx,
 		statusUpdate: statusUpdate,
@@ -42,8 +39,7 @@ func NewWorkflow(apiKey string, ctx context.Context, statusUpdate func(string)) 
 	}
 }
 
-// Run executes the complete workflow, coordinating all agents and collecting their results.
-func (w *Workflow) Run() []WorkflowResult {
+func (w *AdviceWorkflow) RateAdvice(advice string) []WorkflowResult {
 	w.startTime = time.Now()
 	var results []WorkflowResult
 	var mu sync.Mutex
@@ -60,75 +56,76 @@ func (w *Workflow) Run() []WorkflowResult {
 		w.stats.AgentStats[name] = duration
 	}
 
-	// Check if context is already cancelled
 	if w.ctx.Err() != nil {
 		addResult("System", "", fmt.Errorf("context cancelled before starting: %w", w.ctx.Err()), 0)
 		return results
 	}
 
-	w.statusUpdate("Starting writer agent...")
-	writer := NewWriterAgent(w.apiKey)
-	writerOut := make(chan string, 1)
+	w.statusUpdate("Analyzing advice with expert agents...")
 
-	// Writer doesn't need input, just start it directly
-	writerStart := time.Now()
-	if err := writer.Start(w.ctx, nil, writerOut); err != nil {
-		addResult(WriterAgentName, "", err, time.Since(writerStart))
+	careerAgent := NewCareerAgent(w.apiKey)
+	bestFriendAgent := NewBestFriendAgent(w.apiKey)
+	financialAgent := NewFinancialAgent(w.apiKey)
+	techSupportAgent := NewTechSupportAgent(w.apiKey)
+	dieticianAgent := NewDieticianAgent(w.apiKey)
+	lawyerAgent := NewLawyerAgent(w.apiKey)
+
+	var expertWG sync.WaitGroup
+	var expertRatings []string
+	var ratingsMu sync.Mutex
+
+	addRating := func(rating string) {
+		ratingsMu.Lock()
+		defer ratingsMu.Unlock()
+		expertRatings = append(expertRatings, rating)
 	}
 
-	select {
-	case <-w.ctx.Done():
-		addResult(WriterAgentName, "", w.ctx.Err(), time.Since(writerStart))
-	case writerResult := <-writerOut:
-		writerDuration := time.Since(writerStart)
-		if writerResult == "" {
-			addResult(WriterAgentName, "", fmt.Errorf("empty output from writer"), writerDuration)
-			return results
-		}
+	experts := []struct {
+		agent Agent
+		name  string
+	}{
+		{careerAgent, CareerAgentName},
+		{bestFriendAgent, BestFriendAgentName},
+		{financialAgent, FinancialAgentName},
+		{techSupportAgent, TechSupportAgentName},
+		{dieticianAgent, DieticianAgentName},
+		{lawyerAgent, LawyerAgentName},
+	}
 
-		addResult(WriterAgentName, writerResult, nil, writerDuration)
-
-		w.statusUpdate("Processing content with analysis agents...")
-		summarizer := NewSummarizerAgent(w.apiKey)
-		rater := NewStructuredRaterAgent(w.apiKey)
-		titler := NewTitlerAgent(w.apiKey)
-
-		var analysisWG sync.WaitGroup
-		analysisWG.Add(1)
-		go func() {
-			defer analysisWG.Done()
-			w.statusUpdate("Summarizing the content...")
+	for _, expert := range experts {
+		expertWG.Add(1)
+		go func(agent Agent, name string) {
+			defer expertWG.Done()
+			w.statusUpdate(fmt.Sprintf("Getting %s opinion...", name))
 			start := time.Now()
-			summarizerResult, err := w.runSingleAgent(summarizer, SummarizerAgentName, writerResult)
-			addResult(SummarizerAgentName, summarizerResult, err, time.Since(start))
-		}()
-		analysisWG.Add(1)
-		go func() {
-			defer analysisWG.Done()
-			w.statusUpdate("Rating the content...")
-			ratingStart := time.Now()
-			raterResult, err := w.runStructuredAgent(rater, RaterAgentName, writerResult)
-			addResult(RaterAgentName, raterResult, err, time.Since(ratingStart))
-		}()
-		analysisWG.Add(1)
-		go func() {
-			defer analysisWG.Done()
-			w.statusUpdate("Generating a title for the content...")
-			titleStart := time.Now()
-			titleResult, err := w.runSingleAgent(titler, TitlerAgentName, writerResult)
-			addResult(TitlerAgentName, titleResult, err, time.Since(titleStart))
-		}()
-		analysisWG.Wait()
-
+			rating, err := w.runSingleAgent(agent, name, advice)
+			addResult(name, rating, err, time.Since(start))
+			if err == nil {
+				addRating(rating)
+			}
+		}(expert.agent, expert.name)
 	}
+
+	expertWG.Wait()
+
+	w.statusUpdate("Summarizing expert opinions...")
+	summarizerStart := time.Now()
+	summarizer := NewAdviceSummarizerAgent(w.apiKey)
+
+	ratingsMu.Lock()
+	allRatings := strings.Join(expertRatings, "\n")
+	ratingsMu.Unlock()
+
+	summaryInput := fmt.Sprintf("Original advice: %s\n\nExpert ratings:\n%s", advice, allRatings)
+	summary, err := w.runSingleAgent(summarizer, AdviceSummarizerAgentName, summaryInput)
+	addResult(AdviceSummarizerAgentName, summary, err, time.Since(summarizerStart))
 
 	w.stats.TotalDuration = time.Since(w.startTime)
-	w.statusUpdate("Workflow complete!")
+	w.statusUpdate("Analysis complete!")
 	return results
 }
 
-// runSingleAgent executes a single agent with the given input and returns its output.
-func (w *Workflow) runSingleAgent(agent Agent, name, input string) (string, error) {
+func (w *AdviceWorkflow) runSingleAgent(agent Agent, name, input string) (string, error) {
 	agentIn := make(chan string, 1)
 	agentOut := make(chan string, 1)
 
@@ -152,32 +149,6 @@ func (w *Workflow) runSingleAgent(agent Agent, name, input string) (string, erro
 	}
 }
 
-// runStructuredAgent executes a structured rater agent with the given input and returns its output.
-func (w *Workflow) runStructuredAgent(agent *StructuredRaterAgent, name, input string) (string, error) {
-	agentIn := make(chan string, 1)
-	agentOut := make(chan string, 1)
-
-	agentIn <- input
-	close(agentIn)
-
-	if err := agent.Start(w.ctx, agentIn, agentOut); err != nil {
-		return "", err
-	}
-
-	select {
-	case result := <-agentOut:
-		if result == "" {
-			return "", fmt.Errorf("empty response from %s", name)
-		}
-		return result, nil
-	case <-w.ctx.Done():
-		return "", w.ctx.Err()
-	case <-time.After(30 * time.Second):
-		return "", fmt.Errorf("timeout waiting for %s response", name)
-	}
-}
-
-// GetStats returns the workflow timing statistics.
-func (w *Workflow) GetStats() *WorkflowStats {
+func (w *AdviceWorkflow) GetStats() *WorkflowStats {
 	return w.stats
 }
