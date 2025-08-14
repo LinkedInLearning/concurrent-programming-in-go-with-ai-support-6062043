@@ -31,17 +31,21 @@ var (
 
 // model represents the application state for the bubbletea TUI.
 type model struct {
-	spinner  spinner.Model
-	viewport viewport.Model
-	results  []agent.WorkflowResult
-	finished bool
-	status   string
-	quitting bool
-	ready    bool
+	spinner       spinner.Model
+	viewport      viewport.Model
+	results       []agent.WorkflowResult
+	workflowStats *agent.WorkflowStats
+	finished      bool
+	status        string
+	quitting      bool
+	ready         bool
 }
 
 // resultsMsg is a message type that carries workflow results.
-type resultsMsg []agent.WorkflowResult
+type resultsMsg struct {
+	results []agent.WorkflowResult
+	stats   *agent.WorkflowStats
+}
 
 // statusMsg is a message type that carries status updates.
 type statusMsg string
@@ -112,11 +116,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case statusMsg:
-		m.status = string(msg)
+		if !m.finished {
+			m.status = string(msg)
+			// Continue polling for status updates
+			return m, statusUpdater()
+		}
 
 	case resultsMsg:
-		m.results = []agent.WorkflowResult(msg)
+		m.results = msg.results
+		m.workflowStats = msg.stats
 		m.finished = true
+		m.status = "Workflow complete!"
 		// Update viewport content when results are ready
 		if m.ready {
 			m.viewport.SetContent(m.renderContent())
@@ -135,7 +145,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the current state of the model as a string for display.
 func (m model) View() string {
 	if m.quitting {
-		return "\nGoodbye! 👋\n"
+		goodbyeMsg := "\nGoodbye! 👋\n"
+		if m.workflowStats != nil {
+			goodbyeMsg += m.formatTimingStats()
+		}
+		return goodbyeMsg
 	}
 
 	if !m.finished {
@@ -217,17 +231,23 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+// Global variable to track workflow status (simple solution)
+var currentWorkflowStatus = "Initializing workflow..."
+
 // runWorkflow creates and executes the agent workflow, returning a command that produces workflow results.
 func runWorkflow() tea.Cmd {
-	return tea.Sequence(
-		func() tea.Msg { return statusMsg("Starting writer agent...") },
-		tea.Tick(2*time.Second, func(time.Time) tea.Msg { return statusMsg("Processing content with analysis agents...") }),
-		tea.Tick(4*time.Second, func(time.Time) tea.Msg { return statusMsg("Formatting results as markdown...") }),
+	return tea.Batch(
+		// Start a status updater that polls the global status
+		statusUpdater(),
+		// Run the actual workflow
 		func() tea.Msg {
 			apiKey := os.Getenv(EnvOpenAIAPIKey)
 			if apiKey == "" {
 				return resultsMsg{
-					{AgentName: "System", Error: fmt.Errorf("OPENAI_API_KEY environment variable not set")},
+					results: []agent.WorkflowResult{
+						{AgentName: "System", Error: fmt.Errorf("OPENAI_API_KEY environment variable not set")},
+					},
+					stats: nil,
 				}
 			}
 
@@ -235,11 +255,56 @@ func runWorkflow() tea.Cmd {
 			defer cancel()
 
 			workflow := agent.NewWorkflow(apiKey, ctx, func(status string) {
-				// Status updates are handled by the sequence above for simplicity
+				// Update the global status variable
+				currentWorkflowStatus = status
 			})
+			
 			results := workflow.Run()
-
-			return resultsMsg(results)
+			stats := workflow.GetStats()
+			currentWorkflowStatus = "Workflow complete!"
+			
+			return resultsMsg{
+				results: results,
+				stats:   stats,
+			}
 		},
 	)
+}
+
+// statusUpdater creates a command that periodically checks for status updates
+func statusUpdater() tea.Cmd {
+	return tea.Tick(500*time.Millisecond, func(time.Time) tea.Msg {
+		return statusMsg(currentWorkflowStatus)
+	})
+}
+
+// formatTimingStats formats and returns the timing statistics as a string.
+func (m model) formatTimingStats() string {
+	if m.workflowStats == nil {
+		return ""
+	}
+
+	var output strings.Builder
+	output.WriteString("\n📊 Workflow Timing Statistics:\n")
+	output.WriteString(fmt.Sprintf("Total Duration: %v\n\n", m.workflowStats.TotalDuration))
+	
+	output.WriteString("Individual Agent Timings:\n")
+	
+	// Define the order of agents to display
+	agentOrder := []string{
+		agent.WriterAgentName,
+		agent.SummarizerAgentName,
+		agent.RaterAgentName,
+		agent.TitlerAgentName,
+		agent.MarkdownFormatterAgentName,
+	}
+	
+	for _, agentName := range agentOrder {
+		if duration, exists := m.workflowStats.AgentStats[agentName]; exists {
+			output.WriteString(fmt.Sprintf("  • %s: %v\n", agentName, duration))
+		}
+	}
+	
+	output.WriteString("\n")
+	return output.String()
 }

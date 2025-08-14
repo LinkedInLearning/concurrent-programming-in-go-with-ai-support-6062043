@@ -12,6 +12,13 @@ type WorkflowResult struct {
 	AgentName string
 	Output    string
 	Error     error
+	Duration  time.Duration
+}
+
+// WorkflowResult represents the output from a single agent in the workflow.
+type WorkflowStats struct {
+	TotalDuration time.Duration
+	AgentStats    map[string]time.Duration
 }
 
 // Workflow orchestrates the execution of multiple agents in a concurrent pipeline.
@@ -19,6 +26,8 @@ type Workflow struct {
 	apiKey       string
 	ctx          context.Context
 	statusUpdate func(string)
+	startTime    time.Time
+	stats        *WorkflowStats
 }
 
 // NewWorkflow creates a new workflow instance with the given API key, context, and status update callback.
@@ -27,27 +36,33 @@ func NewWorkflow(apiKey string, ctx context.Context, statusUpdate func(string)) 
 		apiKey:       apiKey,
 		ctx:          ctx,
 		statusUpdate: statusUpdate,
+		stats: &WorkflowStats{
+			AgentStats: make(map[string]time.Duration),
+		},
 	}
 }
 
 // Run executes the complete workflow, coordinating all agents and collecting their results.
 func (w *Workflow) Run() []WorkflowResult {
+	w.startTime = time.Now()
 	var results []WorkflowResult
 	var mu sync.Mutex
 
-	addResult := func(name, output string, err error) {
+	addResult := func(name, output string, err error, duration time.Duration) {
 		mu.Lock()
 		defer mu.Unlock()
 		results = append(results, WorkflowResult{
 			AgentName: name,
 			Output:    output,
 			Error:     err,
+			Duration:  duration,
 		})
+		w.stats.AgentStats[name] = duration
 	}
 
 	// Check if context is already cancelled
 	if w.ctx.Err() != nil {
-		addResult("System", "", fmt.Errorf("context cancelled before starting: %w", w.ctx.Err()))
+		addResult("System", "", fmt.Errorf("context cancelled before starting: %w", w.ctx.Err()), 0)
 		return results
 	}
 
@@ -56,18 +71,22 @@ func (w *Workflow) Run() []WorkflowResult {
 	writerOut := make(chan string, 1)
 
 	// Writer doesn't need input, just start it directly
+	writerStart := time.Now()
 	if err := writer.Start(w.ctx, nil, writerOut); err != nil {
-		addResult(WriterAgentName, "", err)
+		addResult(WriterAgentName, "", err, time.Since(writerStart))
 	}
 
 	select {
+	case <-w.ctx.Done():
+		addResult(WriterAgentName, "", w.ctx.Err(), time.Since(writerStart))
 	case writerResult := <-writerOut:
+		writerDuration := time.Since(writerStart)
 		if writerResult == "" {
-			addResult(WriterAgentName, "", fmt.Errorf("empty output from writer"))
+			addResult(WriterAgentName, "", fmt.Errorf("empty output from writer"), writerDuration)
 			return results
 		}
 
-		addResult(WriterAgentName, writerResult, nil)
+		addResult(WriterAgentName, writerResult, nil, writerDuration)
 
 		w.statusUpdate("Processing content with analysis agents...")
 		summarizer := NewSummarizerAgent(w.apiKey)
@@ -75,30 +94,20 @@ func (w *Workflow) Run() []WorkflowResult {
 		titler := NewTitlerAgent(w.apiKey)
 		formatter := NewMarkdownFormatterAgent(w.apiKey)
 
-		var analysisWg sync.WaitGroup
+		w.statusUpdate("Summarizing the content...")
+		start := time.Now()
+		summarizerResult, err := w.runSingleAgent(summarizer, SummarizerAgentName, writerResult)
+		addResult(SummarizerAgentName, summarizerResult, err, time.Since(start))
 
-		analysisWg.Add(1)
-		go func() {
-			defer analysisWg.Done()
-			result, err := w.runSingleAgent(summarizer, SummarizerAgentName, writerResult)
-			addResult(SummarizerAgentName, result, err)
-		}()
+		w.statusUpdate("Rating the content...")
+		ratingStart := time.Now()
+		raterResult, err := w.runStructuredAgent(rater, RaterAgentName, writerResult)
+		addResult(RaterAgentName, raterResult, err, time.Since(ratingStart))
 
-		analysisWg.Add(1)
-		go func() {
-			defer analysisWg.Done()
-			result, err := w.runStructuredAgent(rater, RaterAgentName, writerResult)
-			addResult(RaterAgentName, result, err)
-		}()
-
-		analysisWg.Add(1)
-		go func() {
-			defer analysisWg.Done()
-			result, err := w.runSingleAgent(titler, TitlerAgentName, writerResult)
-			addResult(TitlerAgentName, result, err)
-		}()
-
-		analysisWg.Wait()
+		w.statusUpdate("Generating a title for the content...")
+		titleStart := time.Now()
+		titleResult, err := w.runSingleAgent(titler, TitlerAgentName, writerResult)
+		addResult(TitlerAgentName, titleResult, err, time.Since(titleStart))
 
 		// Format all results into markdown
 		w.statusUpdate("Formatting results as markdown...")
@@ -108,21 +117,13 @@ func (w *Workflow) Run() []WorkflowResult {
 			w.getResultByName(results, RaterAgentName),
 			writerResult)
 
-		analysisWg.Add(1)
-		go func() {
-			defer analysisWg.Done()
-			result, err := w.runSingleAgent(formatter, MarkdownFormatterAgentName, allContent)
-			addResult(MarkdownFormatterAgentName, result, err)
-		}()
+		markdownstart := time.Now()
+		result, err := w.runSingleAgent(formatter, MarkdownFormatterAgentName, allContent)
+		addResult(MarkdownFormatterAgentName, result, err, time.Since(markdownstart))
 
-		analysisWg.Wait()
-
-	case <-w.ctx.Done():
-		addResult(WriterAgentName, "", w.ctx.Err())
-	case <-time.After(30 * time.Second):
-		addResult(WriterAgentName, "", fmt.Errorf("timeout waiting for writer response"))
 	}
 
+	w.stats.TotalDuration = time.Since(w.startTime)
 	w.statusUpdate("Workflow complete!")
 	return results
 }
@@ -185,4 +186,9 @@ func (w *Workflow) getResultByName(results []WorkflowResult, name string) string
 		}
 	}
 	return "N/A"
+}
+
+// GetStats returns the workflow timing statistics.
+func (w *Workflow) GetStats() *WorkflowStats {
+	return w.stats
 }
