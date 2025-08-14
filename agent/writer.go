@@ -15,9 +15,11 @@ type WriterAgent struct {
 // NewWriterAgent creates a new WriterAgent with predefined prompts for startup content generation.
 func NewWriterAgent(apiKey string) *WriterAgent {
 	config := Config{
-		Name:   WriterAgentName,
-		Model:  "gpt-5",
-		Prompt: "You are a business writing expert. Write exactly one well-structured paragraph about building a startup company. Focus on practical advice and key considerations. Keep it informative and engaging.",
+		Name:  WriterAgentName,
+		Model: "gpt-5",
+		Prompt: `You are a business writing expert.
+		Write exactly one well-structured paragraph about building a startup company.
+		Focus on practical advice and key considerations. Keep it informative and engaging.`,
 	}
 	return &WriterAgent{
 		BaseAgent: NewBaseAgent(config, apiKey),

@@ -16,9 +16,11 @@ type MarkdownFormatterAgent struct {
 // NewMarkdownFormatterAgent creates a new MarkdownFormatterAgent with predefined prompts for markdown formatting.
 func NewMarkdownFormatterAgent(apiKey string) *MarkdownFormatterAgent {
 	config := Config{
-		Name:   MarkdownFormatterAgentName,
-		Model:  "gpt-5",
-		Prompt: "You are a markdown formatting expert. Take the provided content and format it into a well-structured markdown document. Use appropriate headers, formatting, and structure to make it readable and professional.",
+		Name:  MarkdownFormatterAgentName,
+		Model: "gpt-5",
+		Prompt: `You are a markdown formatting expert. 
+		Take the provided content and format it into a well-structured markdown document. 
+		Use appropriate headers, formatting, and structure to make it readable and professional.`,
 	}
 	return &MarkdownFormatterAgent{
 		BaseAgent: NewBaseAgent(config, apiKey),
@@ -36,12 +38,12 @@ func (m *MarkdownFormatterAgent) Start(ctx context.Context, input <-chan string,
 				close(output)
 				return nil
 			}
-			
+
 			response, err := m.callOpenAI(ctx, fmt.Sprintf("Format this content into a well-structured markdown document: %s", content))
 			if err != nil {
 				continue
 			}
-			
+
 			output <- response
 			close(output)
 			return nil

@@ -16,9 +16,10 @@ type SummarizerAgent struct {
 // NewSummarizerAgent creates a new SummarizerAgent with predefined prompts for text summarization.
 func NewSummarizerAgent(apiKey string) *SummarizerAgent {
 	config := Config{
-		Name:   SummarizerAgentName,
-		Model:  "gpt-5-mini",
-		Prompt: "You are a summarization expert. Take the provided text and summarize it into exactly two clear, concise sentences that capture the main points.",
+		Name:  SummarizerAgentName,
+		Model: "gpt-5-mini",
+		Prompt: `You are a summarization expert. 
+		Take the provided text and summarize it into exactly two clear, concise sentences that capture the main points.`,
 	}
 	return &SummarizerAgent{
 		BaseAgent: NewBaseAgent(config, apiKey),

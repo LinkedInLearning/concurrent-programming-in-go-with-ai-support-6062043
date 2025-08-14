@@ -16,9 +16,11 @@ type TitlerAgent struct {
 // NewTitlerAgent creates a new TitlerAgent with predefined prompts for title generation.
 func NewTitlerAgent(apiKey string) *TitlerAgent {
 	config := Config{
-		Name:   TitlerAgentName,
-		Model:  "gpt-5-nano",
-		Prompt: "You are a title generation expert. Create a compelling, concise title for the provided text that captures its essence. Provide only the title, nothing else.",
+		Name:  TitlerAgentName,
+		Model: "gpt-5-nano",
+		Prompt: `You are an expert copy editor. 
+		Create a compelling, concise title for the provided text that captures its essence. 
+		Provide only the title, nothing else.`,
 	}
 	return &TitlerAgent{
 		BaseAgent: NewBaseAgent(config, apiKey),
