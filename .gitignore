@@ -3,3 +3,7 @@ node_modules
 .tmp
 npm-debug.log
 .crush
+.env
+agentic-app
+weaviate-data
+rss-search
