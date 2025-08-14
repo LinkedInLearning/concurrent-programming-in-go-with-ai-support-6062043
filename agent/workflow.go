@@ -92,7 +92,6 @@ func (w *Workflow) Run() []WorkflowResult {
 		summarizer := NewSummarizerAgent(w.apiKey)
 		rater := NewStructuredRaterAgent(w.apiKey)
 		titler := NewTitlerAgent(w.apiKey)
-		formatter := NewMarkdownFormatterAgent(w.apiKey)
 
 		var analysisWG sync.WaitGroup
 		analysisWG.Add(1)
@@ -120,17 +119,6 @@ func (w *Workflow) Run() []WorkflowResult {
 			addResult(TitlerAgentName, titleResult, err, time.Since(titleStart))
 		}()
 		analysisWG.Wait()
-		// Format all results into markdown
-		w.statusUpdate("Formatting results as markdown...")
-		allContent := fmt.Sprintf("Title: %s\n\nSummary: %s\n\nRating: %s\n\nOriginal Content: %s",
-			w.getResultByName(results, TitlerAgentName),
-			w.getResultByName(results, SummarizerAgentName),
-			w.getResultByName(results, RaterAgentName),
-			writerResult)
-
-		markdownstart := time.Now()
-		result, err := w.runSingleAgent(formatter, MarkdownFormatterAgentName, allContent)
-		addResult(MarkdownFormatterAgentName, result, err, time.Since(markdownstart))
 
 	}
 
@@ -187,16 +175,6 @@ func (w *Workflow) runStructuredAgent(agent *StructuredRaterAgent, name, input s
 	case <-time.After(30 * time.Second):
 		return "", fmt.Errorf("timeout waiting for %s response", name)
 	}
-}
-
-// getResultByName retrieves the output of a specific agent by name from the results slice.
-func (w *Workflow) getResultByName(results []WorkflowResult, name string) string {
-	for _, result := range results {
-		if result.AgentName == name && result.Error == nil {
-			return result.Output
-		}
-	}
-	return "N/A"
 }
 
 // GetStats returns the workflow timing statistics.
