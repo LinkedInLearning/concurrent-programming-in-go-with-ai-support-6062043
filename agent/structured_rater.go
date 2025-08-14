@@ -11,6 +11,9 @@ import (
 	"github.com/openai/openai-go/option"
 )
 
+// RaterAgentName is the identifier for the structured rater agent.
+const RaterAgentName = "Rater"
+
 // RatingResponse represents the structured output from the rating agent.
 type RatingResponse struct {
 	Rating      int    `json:"rating" jsonschema:"minimum=1,maximum=10" jsonschema_description:"Numeric rating from 1-10 where 10 is extremely helpful and accurate"`
@@ -36,7 +39,7 @@ func NewStructuredRaterAgent(apiKey string) *StructuredRaterAgent {
 	schema := reflector.Reflect(RatingResponse{})
 
 	config := Config{
-		Name:   "Rater",
+		Name:   RaterAgentName,
 		Model:  "gpt-5-nano",
 		Prompt: "You are an expert evaluator. Rate the provided text for helpfulness and accuracy on a scale of 1-10, where 10 is extremely helpful and accurate. Provide your rating and a brief explanation.",
 	}

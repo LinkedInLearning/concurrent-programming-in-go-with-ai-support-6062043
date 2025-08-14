@@ -85,13 +85,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 			case "up", "k":
-				m.viewport.LineUp(1)
+				m.viewport.ScrollUp(1)
 			case "down", "j":
-				m.viewport.LineDown(1)
+				m.viewport.ScrollDown(1)
 			case "pgup", "b":
-				m.viewport.HalfViewUp()
+				m.viewport.HalfPageUp()
 			case "pgdown", "f":
-				m.viewport.HalfViewDown()
+				m.viewport.HalfPageDown()
 			case "home", "g":
 				m.viewport.GotoTop()
 			case "end", "G":
@@ -165,7 +165,7 @@ func (m model) renderContent() string {
 			hasErrors = true
 			content := fmt.Sprintf("Agent: %s\nError: %s", result.AgentName, result.Error.Error())
 			output += errorStyle.Render(content) + "\n"
-		} else if result.AgentName == "MarkdownFormatter" {
+		} else if result.AgentName == agent.MarkdownFormatterAgentName {
 			markdownContent = result.Output
 		}
 	}
@@ -190,7 +190,7 @@ func (m model) renderContent() string {
 	} else if !hasErrors {
 		// Fallback to showing individual results if no markdown formatter
 		for _, result := range m.results {
-			if result.Error == nil && result.AgentName != "MarkdownFormatter" {
+			if result.Error == nil && result.AgentName != agent.MarkdownFormatterAgentName {
 				output += fmt.Sprintf("**%s:**\n%s\n\n", result.AgentName, result.Output)
 			}
 		}
@@ -200,7 +200,7 @@ func (m model) renderContent() string {
 	if hasErrors {
 		output += "\n**Individual Agent Results:**\n"
 		for _, result := range m.results {
-			if result.Error == nil && result.AgentName != "MarkdownFormatter" {
+			if result.Error == nil && result.AgentName != agent.MarkdownFormatterAgentName {
 				output += fmt.Sprintf("- **%s:** %s\n", result.AgentName, truncateString(result.Output, 100))
 			}
 		}

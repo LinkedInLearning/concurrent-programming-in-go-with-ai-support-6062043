@@ -5,6 +5,9 @@ import (
 	"fmt"
 )
 
+// MarkdownFormatterAgentName is the identifier for the markdown formatter agent.
+const MarkdownFormatterAgentName = "MarkdownFormatter"
+
 // MarkdownFormatterAgent formats content into well-structured markdown documents.
 type MarkdownFormatterAgent struct {
 	*BaseAgent
@@ -13,7 +16,7 @@ type MarkdownFormatterAgent struct {
 // NewMarkdownFormatterAgent creates a new MarkdownFormatterAgent with predefined prompts for markdown formatting.
 func NewMarkdownFormatterAgent(apiKey string) *MarkdownFormatterAgent {
 	config := Config{
-		Name:   "MarkdownFormatter",
+		Name:   MarkdownFormatterAgentName,
 		Model:  "gpt-5",
 		Prompt: "You are a markdown formatting expert. Take the provided content and format it into a well-structured markdown document. Use appropriate headers, formatting, and structure to make it readable and professional.",
 	}

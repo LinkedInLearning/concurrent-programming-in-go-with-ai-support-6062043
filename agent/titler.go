@@ -5,6 +5,9 @@ import (
 	"fmt"
 )
 
+// TitlerAgentName is the identifier for the titler agent.
+const TitlerAgentName = "Titler"
+
 // TitlerAgent generates compelling titles for input text.
 type TitlerAgent struct {
 	*BaseAgent
@@ -13,7 +16,7 @@ type TitlerAgent struct {
 // NewTitlerAgent creates a new TitlerAgent with predefined prompts for title generation.
 func NewTitlerAgent(apiKey string) *TitlerAgent {
 	config := Config{
-		Name:   "Titler",
+		Name:   TitlerAgentName,
 		Model:  "gpt-5-nano",
 		Prompt: "You are a title generation expert. Create a compelling, concise title for the provided text that captures its essence. Provide only the title, nothing else.",
 	}

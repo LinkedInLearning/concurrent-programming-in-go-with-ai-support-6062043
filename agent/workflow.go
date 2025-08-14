@@ -55,27 +55,19 @@ func (w *Workflow) Run() []WorkflowResult {
 	writer := NewWriterAgent(w.apiKey)
 	writerOut := make(chan string, 1)
 
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		// Writer doesn't need input, just start it directly
-		if err := writer.Start(w.ctx, nil, writerOut); err != nil {
-			addResult("Writer", "", err)
-		}
-	}()
-
-	wg.Wait()
+	// Writer doesn't need input, just start it directly
+	if err := writer.Start(w.ctx, nil, writerOut); err != nil {
+		addResult(WriterAgentName, "", err)
+	}
 
 	select {
 	case writerResult := <-writerOut:
 		if writerResult == "" {
-			addResult("Writer", "", fmt.Errorf("empty output from writer"))
+			addResult(WriterAgentName, "", fmt.Errorf("empty output from writer"))
 			return results
 		}
 
-		addResult("Writer", writerResult, nil)
+		addResult(WriterAgentName, writerResult, nil)
 
 		w.statusUpdate("Processing content with analysis agents...")
 		summarizer := NewSummarizerAgent(w.apiKey)
@@ -83,52 +75,52 @@ func (w *Workflow) Run() []WorkflowResult {
 		titler := NewTitlerAgent(w.apiKey)
 		formatter := NewMarkdownFormatterAgent(w.apiKey)
 
-		var wg2 sync.WaitGroup
+		var analysisWg sync.WaitGroup
 
-		wg2.Add(1)
+		analysisWg.Add(1)
 		go func() {
-			defer wg2.Done()
-			result, err := w.runSingleAgent(summarizer, "Summarizer", writerResult)
-			addResult("Summarizer", result, err)
+			defer analysisWg.Done()
+			result, err := w.runSingleAgent(summarizer, SummarizerAgentName, writerResult)
+			addResult(SummarizerAgentName, result, err)
 		}()
 
-		wg2.Add(1)
+		analysisWg.Add(1)
 		go func() {
-			defer wg2.Done()
-			result, err := w.runStructuredAgent(rater, "Rater", writerResult)
-			addResult("Rater", result, err)
+			defer analysisWg.Done()
+			result, err := w.runStructuredAgent(rater, RaterAgentName, writerResult)
+			addResult(RaterAgentName, result, err)
 		}()
 
-		wg2.Add(1)
+		analysisWg.Add(1)
 		go func() {
-			defer wg2.Done()
-			result, err := w.runSingleAgent(titler, "Titler", writerResult)
-			addResult("Titler", result, err)
+			defer analysisWg.Done()
+			result, err := w.runSingleAgent(titler, TitlerAgentName, writerResult)
+			addResult(TitlerAgentName, result, err)
 		}()
 
-		wg2.Wait()
+		analysisWg.Wait()
 
 		// Format all results into markdown
 		w.statusUpdate("Formatting results as markdown...")
 		allContent := fmt.Sprintf("Title: %s\n\nSummary: %s\n\nRating: %s\n\nOriginal Content: %s",
-			w.getResultByName(results, "Titler"),
-			w.getResultByName(results, "Summarizer"),
-			w.getResultByName(results, "Rater"),
+			w.getResultByName(results, TitlerAgentName),
+			w.getResultByName(results, SummarizerAgentName),
+			w.getResultByName(results, RaterAgentName),
 			writerResult)
 
-		wg2.Add(1)
+		analysisWg.Add(1)
 		go func() {
-			defer wg2.Done()
-			result, err := w.runSingleAgent(formatter, "MarkdownFormatter", allContent)
-			addResult("MarkdownFormatter", result, err)
+			defer analysisWg.Done()
+			result, err := w.runSingleAgent(formatter, MarkdownFormatterAgentName, allContent)
+			addResult(MarkdownFormatterAgentName, result, err)
 		}()
 
-		wg2.Wait()
+		analysisWg.Wait()
 
 	case <-w.ctx.Done():
-		addResult("Writer", "", w.ctx.Err())
+		addResult(WriterAgentName, "", w.ctx.Err())
 	case <-time.After(30 * time.Second):
-		addResult("Writer", "", fmt.Errorf("timeout waiting for writer response"))
+		addResult(WriterAgentName, "", fmt.Errorf("timeout waiting for writer response"))
 	}
 
 	w.statusUpdate("Workflow complete!")
