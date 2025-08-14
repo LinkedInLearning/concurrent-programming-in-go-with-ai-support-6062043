@@ -94,21 +94,32 @@ func (w *Workflow) Run() []WorkflowResult {
 		titler := NewTitlerAgent(w.apiKey)
 		formatter := NewMarkdownFormatterAgent(w.apiKey)
 
-		w.statusUpdate("Summarizing the content...")
-		start := time.Now()
-		summarizerResult, err := w.runSingleAgent(summarizer, SummarizerAgentName, writerResult)
-		addResult(SummarizerAgentName, summarizerResult, err, time.Since(start))
-
-		w.statusUpdate("Rating the content...")
-		ratingStart := time.Now()
-		raterResult, err := w.runStructuredAgent(rater, RaterAgentName, writerResult)
-		addResult(RaterAgentName, raterResult, err, time.Since(ratingStart))
-
-		w.statusUpdate("Generating a title for the content...")
-		titleStart := time.Now()
-		titleResult, err := w.runSingleAgent(titler, TitlerAgentName, writerResult)
-		addResult(TitlerAgentName, titleResult, err, time.Since(titleStart))
-
+		var analysisWG sync.WaitGroup
+		analysisWG.Add(1)
+		go func() {
+			defer analysisWG.Done()
+			w.statusUpdate("Summarizing the content...")
+			start := time.Now()
+			summarizerResult, err := w.runSingleAgent(summarizer, SummarizerAgentName, writerResult)
+			addResult(SummarizerAgentName, summarizerResult, err, time.Since(start))
+		}()
+		analysisWG.Add(1)
+		go func() {
+			defer analysisWG.Done()
+			w.statusUpdate("Rating the content...")
+			ratingStart := time.Now()
+			raterResult, err := w.runStructuredAgent(rater, RaterAgentName, writerResult)
+			addResult(RaterAgentName, raterResult, err, time.Since(ratingStart))
+		}()
+		analysisWG.Add(1)
+		go func() {
+			defer analysisWG.Done()
+			w.statusUpdate("Generating a title for the content...")
+			titleStart := time.Now()
+			titleResult, err := w.runSingleAgent(titler, TitlerAgentName, writerResult)
+			addResult(TitlerAgentName, titleResult, err, time.Since(titleStart))
+		}()
+		analysisWG.Wait()
 		// Format all results into markdown
 		w.statusUpdate("Formatting results as markdown...")
 		allContent := fmt.Sprintf("Title: %s\n\nSummary: %s\n\nRating: %s\n\nOriginal Content: %s",
