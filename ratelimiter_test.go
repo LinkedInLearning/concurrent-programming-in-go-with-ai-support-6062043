@@ -165,6 +165,75 @@ func TestTokenBucketConcurrency(t *testing.T) {
 	}
 }
 
+func TestTokenBucketStopWhileWaiting(t *testing.T) {
+	tb := NewTokenBucket(1, 1*time.Hour)
+
+	tb.Allow()
+
+	waitStarted := make(chan struct{})
+	waitResult := make(chan error, 1)
+
+	go func() {
+		close(waitStarted)
+		ctx := context.Background()
+		err := tb.Wait(ctx)
+		waitResult <- err
+	}()
+
+	<-waitStarted
+
+	time.Sleep(10 * time.Millisecond)
+
+	tb.Stop()
+
+	select {
+	case err := <-waitResult:
+		if err != ErrRateLimiterStopped {
+			t.Errorf("expected ErrRateLimiterStopped when stopped while waiting, got %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Wait() did not return after Stop() was called")
+	}
+}
+
+func TestTokenBucketStopWhileMultipleClientsWaiting(t *testing.T) {
+	tb := NewTokenBucket(1, 1*time.Hour)
+
+	tb.Allow()
+
+	const numClients = 5
+	waitStarted := make(chan struct{}, numClients)
+	waitResults := make(chan error, numClients)
+
+	for i := 0; i < numClients; i++ {
+		go func() {
+			waitStarted <- struct{}{}
+			ctx := context.Background()
+			err := tb.Wait(ctx)
+			waitResults <- err
+		}()
+	}
+
+	for i := 0; i < numClients; i++ {
+		<-waitStarted
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	tb.Stop()
+
+	for i := 0; i < numClients; i++ {
+		select {
+		case err := <-waitResults:
+			if err != ErrRateLimiterStopped {
+				t.Errorf("expected ErrRateLimiterStopped for client %d when stopped while waiting, got %v", i+1, err)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Errorf("client %d Wait() did not return after Stop() was called", i+1)
+		}
+	}
+}
+
 func BenchmarkTokenBucketAllow(b *testing.B) {
 	tb := NewTokenBucket(1000000, time.Nanosecond)
 	defer tb.Stop()

@@ -89,6 +89,8 @@ func (tb *TokenBucket) Wait(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-tb.stopCh:
+		return ErrRateLimiterStopped
 	}
 }
 
