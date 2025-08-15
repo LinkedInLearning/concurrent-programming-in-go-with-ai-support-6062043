@@ -27,17 +27,24 @@ func main() {
 		apiKey = "dummy-key-for-demo"
 	}
 
-	config := client.APIClientConfig{
+	largeConfig := client.APIClientConfig{
 		APIKey:            apiKey,
 		RequestsPerMinute: 10,
 		TokensPerMinute:   25,
 		Logger:            logger,
 	}
+	smallConfig := client.APIClientConfig{
+		APIKey:            apiKey,
+		RequestsPerMinute: 2,
+		TokensPerMinute:   5,
+		Logger:            logger,
+	}
 
 	clients := make([]router.Client, 3)
-	for i := 0; i < 3; i++ {
-		clients[i] = client.NewAPIClient(config)
+	for i := 0; i < 2; i++ {
+		clients[i] = client.NewAPIClient(largeConfig)
 	}
+	clients[2] = client.NewAPIClient(smallConfig)
 
 	defer func() {
 		for _, c := range clients {
@@ -53,8 +60,8 @@ func main() {
 
 	logger.Info("Starting router demonstration with multiple clients",
 		"num_clients", len(clients),
-		"requests_per_minute", config.RequestsPerMinute,
-		"tokens_per_minute", config.TokensPerMinute,
+		"requests_per_minute", largeConfig.RequestsPerMinute,
+		"tokens_per_minute", largeConfig.TokensPerMinute,
 	)
 
 	req := openai.ChatCompletionNewParams{
@@ -64,7 +71,7 @@ func main() {
 		Model: openai.ChatModelGPT4oMini,
 	}
 
-	for i := 1; i <= 6; i++ {
+	for i := 1; i <= 15; i++ {
 		start := time.Now()
 		resp, err := requestRouter.CreateChatCompletion(ctx, req)
 		duration := time.Since(start)

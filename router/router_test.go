@@ -12,6 +12,10 @@ type mockClient struct {
 	id string
 }
 
+func (m mockClient) AvailableTokens() int {
+	return 10
+}
+
 func (m *mockClient) CreateChatCompletion(ctx context.Context, req openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	return &openai.ChatCompletion{
 		ID: m.id,

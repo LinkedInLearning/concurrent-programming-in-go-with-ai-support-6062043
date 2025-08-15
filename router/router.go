@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -15,6 +14,7 @@ import (
 
 type Client interface {
 	CreateChatCompletion(ctx context.Context, req openai.ChatCompletionNewParams) (*openai.ChatCompletion, error)
+	AvailableTokens() int
 }
 
 type namedClient struct {
@@ -25,7 +25,6 @@ type namedClient struct {
 
 type Router struct {
 	clients []namedClient
-	counter uint64
 	logger  *log.Logger
 }
 
@@ -62,8 +61,16 @@ func (r *Router) CreateChatCompletion(ctx context.Context, req openai.ChatComple
 		return nil, fmt.Errorf("no clients available")
 	}
 
-	index := atomic.AddUint64(&r.counter, 1) - 1
-	selectedClient := r.clients[index%uint64(len(r.clients))]
+	var selectedClient namedClient
+	maxTokens := -1
+
+	for _, client := range r.clients {
+		tokens := client.client.AvailableTokens() // Assuming AvailableTokens() is implemented for the Client interface
+		if tokens > maxTokens {
+			maxTokens = tokens
+			selectedClient = client
+		}
+	}
 
 	r.logger.Info(fmt.Sprintf("\033[%sm[ %s ]\033[0m used to handle request", selectedClient.color, selectedClient.name))
 

@@ -45,6 +45,10 @@ type APIClientConfig struct {
 	Logger            *log.Logger
 }
 
+func (a APIClient) AvailableTokens() int {
+	return a.tokenLimiter.AvailableTokens()
+}
+
 func NewAPIClient(config APIClientConfig) *APIClient {
 	if config.RequestsPerMinute <= 0 {
 		config.RequestsPerMinute = DefaultRequestsPerMinute
