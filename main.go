@@ -1,19 +1,315 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"time"
 
+	"concurrent-programming-go-agents/agent"
+
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/joho/godotenv"
 )
 
 const (
-	EnvOpenAIAPIKey = "OPENAI_API_KEY"
+	StoryEnvOpenAIAPIKey = "OPENAI_API_KEY"
 )
 
-// main is the entry point of the application that initializes the environment and starts the TUI.
+type AgentStatus struct {
+	name      string
+	status    string // "waiting", "running", "completed", "error"
+	message   string
+	spinner   spinner.Model
+	startTime time.Time
+	endTime   time.Time
+}
+
+type storyModel struct {
+	userInput     string
+	workflow      *agent.StoryWorkflow
+	status        string
+	isProcessing  bool
+	err           error
+	agentStatuses []AgentStatus
+	currentStep   int
+	progressChan  chan agent.ProgressUpdate
+}
+
+type storyCompleteMsg struct {
+	err error
+}
+
+type progressUpdateMsg struct {
+	update agent.ProgressUpdate
+}
+
+func initialStoryModel() storyModel {
+	// Initialize spinners for each agent
+	agentNames := []string{
+		"Plot Designer",
+		"Worldbuilder", 
+		"Plot Expander",
+		"Character Developer",
+		"Author (Ch 1)",
+		"Author (Ch 2)", 
+		"Author (Ch 3)",
+		"Author (Ch 4)",
+		"Author (Ch 5)",
+		"Story Summarizer",
+		"Editor",
+	}
+	
+	agentStatuses := make([]AgentStatus, len(agentNames))
+	for i, name := range agentNames {
+		s := spinner.New()
+		s.Spinner = spinner.Dot
+		s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
+		agentStatuses[i] = AgentStatus{
+			name:    name,
+			status:  "waiting",
+			message: "Waiting to start...",
+			spinner: s,
+		}
+	}
+	
+	return storyModel{
+		status:        "Enter your story prompt and press Enter to begin...",
+		agentStatuses: agentStatuses,
+		currentStep:   -1,
+	}
+}
+
+func (m storyModel) Init() tea.Cmd {
+	// Initialize spinner commands for all agents
+	var cmds []tea.Cmd
+	for i := range m.agentStatuses {
+		cmds = append(cmds, m.agentStatuses[i].spinner.Tick)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m storyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "enter":
+			if !m.isProcessing && m.userInput != "" {
+				return m.startStoryCreation()
+			}
+		case "backspace":
+			if len(m.userInput) > 0 && !m.isProcessing {
+				m.userInput = m.userInput[:len(m.userInput)-1]
+			}
+		case "ctrl+h":
+			if len(m.userInput) > 0 && !m.isProcessing {
+				m.userInput = m.userInput[:len(m.userInput)-1]
+			}
+		default:
+			if !m.isProcessing {
+				// Handle pasting and regular input
+				input := msg.String()
+				for _, char := range input {
+					// Only add printable characters
+					if char >= 32 && char <= 126 {
+						m.userInput += string(char)
+					}
+				}
+			}
+		}
+		
+	case progressUpdateMsg:
+		// Update agent status based on progress update
+		if msg.update.AgentName != "" {
+			for i := range m.agentStatuses {
+				if m.agentStatuses[i].name == msg.update.AgentName {
+					m.agentStatuses[i].status = msg.update.Status
+					m.agentStatuses[i].message = msg.update.Message
+					if msg.update.Status == "started" {
+						m.agentStatuses[i].startTime = time.Now()
+						// Start the spinner for this agent
+						cmds = append(cmds, m.agentStatuses[i].spinner.Tick)
+					} else if msg.update.Status == "completed" || msg.update.Status == "error" {
+						m.agentStatuses[i].endTime = time.Now()
+					}
+					break
+				}
+			}
+		}
+		// Continue listening for progress updates
+		if m.isProcessing {
+			cmds = append(cmds, m.listenForProgress())
+		}
+		
+	case spinner.TickMsg:
+		// Update spinners for running agents
+		if m.isProcessing {
+			for i := range m.agentStatuses {
+				if m.agentStatuses[i].status == "started" {
+					var cmd tea.Cmd
+					m.agentStatuses[i].spinner, cmd = m.agentStatuses[i].spinner.Update(msg)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				}
+			}
+		}
+		
+	case storyCompleteMsg:
+		m.isProcessing = false
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = fmt.Sprintf("Error: %v", msg.err)
+		} else {
+			m.status = "Story creation complete! Check the 'workspace' folder for all generated files."
+		}
+	}
+	
+	return m, tea.Batch(cmds...)
+}
+
+// listenForProgress creates a command to listen for progress updates
+func (m storyModel) listenForProgress() tea.Cmd {
+	return func() tea.Msg {
+		if m.workflow != nil {
+			select {
+			case update := <-m.workflow.GetProgressChan():
+				return progressUpdateMsg{update: update}
+			case <-time.After(50 * time.Millisecond):
+				// Continue listening by returning a special message
+				return progressUpdateMsg{update: agent.ProgressUpdate{}}
+			}
+		}
+		return nil
+	}
+}
+
+
+
+func (m storyModel) startStoryCreation() (tea.Model, tea.Cmd) {
+	apiKey := os.Getenv(StoryEnvOpenAIAPIKey)
+	if apiKey == "" {
+		m.err = fmt.Errorf("OPENAI_API_KEY environment variable not set")
+		m.status = "Error: OPENAI_API_KEY not set"
+		return m, nil
+	}
+
+	workflow, err := agent.NewStoryWorkflow(apiKey)
+	if err != nil {
+		m.err = err
+		m.status = fmt.Sprintf("Error creating workflow: %v", err)
+		return m, nil
+	}
+
+	m.workflow = workflow
+	m.isProcessing = true
+	m.status = "Creating your story... This may take several minutes."
+	
+	// Start the first agent (Plot Designer) immediately
+	if len(m.agentStatuses) > 0 {
+		m.agentStatuses[0].status = "started"
+		m.agentStatuses[0].message = "Creating story structure..."
+		m.agentStatuses[0].startTime = time.Now()
+	}
+
+	return m, tea.Batch(
+		// Start the story creation workflow
+		func() tea.Msg {
+			ctx := context.WithoutCancel(context.Background())
+			err := workflow.ExecuteStoryCreation(ctx, m.userInput)
+			return storyCompleteMsg{err: err}
+		},
+		// Start listening for progress updates
+		m.listenForProgress(),
+	)
+}
+
+func (m storyModel) View() string {
+	var s string
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#7D56F4")).
+		MarginBottom(1)
+
+	inputStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#7D56F4")).
+		Padding(1).
+		Width(80)
+
+	statusStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#626262")).
+		MarginTop(1)
+
+	if m.isProcessing {
+		statusStyle = statusStyle.Foreground(lipgloss.Color("#04B575"))
+	}
+
+	if m.err != nil {
+		statusStyle = statusStyle.Foreground(lipgloss.Color("#FF5F87"))
+	}
+
+	s += titleStyle.Render("🤖 Agentic Storywriter")
+	s += "\n\n"
+
+	if !m.isProcessing {
+		s += "Enter your story prompt (a couple of sentences describing the story you want):\n\n"
+		s += inputStyle.Render(m.userInput + "│")
+		s += "\n\n"
+		s += "Press Enter to start story creation, or Ctrl+C to quit\n"
+	}
+
+	s += "\n"
+	s += statusStyle.Render(m.status)
+
+	if m.isProcessing {
+		s += "\n\n"
+		s += "🔄 Story Creation Progress:\n\n"
+		
+		// Display each agent's status with spinners
+		for _, agent := range m.agentStatuses {
+			var statusIcon string
+			var statusColor lipgloss.Color
+			
+			switch agent.status {
+			case "waiting":
+				statusIcon = "⏳"
+				statusColor = lipgloss.Color("#626262")
+			case "started", "running":
+				statusIcon = agent.spinner.View()
+				statusColor = lipgloss.Color("#7D56F4")
+			case "completed":
+				statusIcon = "✅"
+				statusColor = lipgloss.Color("#04B575")
+			case "error":
+				statusIcon = "❌"
+				statusColor = lipgloss.Color("#FF5F87")
+			default:
+				statusIcon = "⏳"
+				statusColor = lipgloss.Color("#626262")
+			}
+			
+			agentStyle := lipgloss.NewStyle().Foreground(statusColor)
+			s += fmt.Sprintf("%s %s - %s\n", 
+				statusIcon, 
+				agentStyle.Render(agent.name), 
+				agentStyle.Render(agent.message))
+		}
+		
+		s += "\n💡 Tip: This process may take several minutes as each agent works on your story."
+	}
+
+	return s
+}
+
 func main() {
 	// Load environment variables from .env file
 	if err := godotenv.Load(); err != nil {
@@ -21,29 +317,33 @@ func main() {
 	}
 
 	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
-		fmt.Println("🤖 Agentic Application")
+		fmt.Println("🤖 Agentic Storywriter")
 		fmt.Println()
-		fmt.Println("A concurrent Go application demonstrating an agentic workflow using OpenAI.")
+		fmt.Println("An AI-powered story writing application using multiple specialized agents.")
 		fmt.Println()
 		fmt.Println("SETUP:")
 		fmt.Println("  Set OPENAI_API_KEY environment variable or create a .env file")
 		fmt.Println()
 		fmt.Println("USAGE:")
 		fmt.Println("  go run main.go")
-		fmt.Println("  ./agentic-app")
+		fmt.Println("  go run .")
 		fmt.Println()
 		fmt.Println("AGENTS:")
-		fmt.Println("  • Writer - Generates content about startup companies")
-		fmt.Println("  • Summarizer - Creates concise summaries")
-		fmt.Println("  • Rater - Provides structured ratings (1-10)")
-		fmt.Println("  • Titler - Generates compelling titles")
-		fmt.Println("  • MarkdownFormatter - Formats results as markdown")
+		fmt.Println("  • Plot Designer - Creates 9-point story structure")
+		fmt.Println("  • Worldbuilder - Develops story world and setting")
+		fmt.Println("  • Plot Expander - Expands plot points into paragraphs")
+		fmt.Println("  • Character Developer - Creates protagonist, villain, and supporting characters")
+		fmt.Println("  • Author - Writes story chapters (2 pages each)")
+		fmt.Println("  • Story Summarizer - Creates chapter summaries")
+		fmt.Println("  • Editor - Reviews and edits for coherence")
+		fmt.Println("  • Supervisor Summary - Manages memory and compaction")
 		fmt.Println()
-		fmt.Println("The final output is rendered with beautiful markdown formatting!")
+		fmt.Println("OUTPUT:")
+		fmt.Println("  All generated content is saved to the 'workspace' folder as .md files")
 		return
 	}
 
-	program := tea.NewProgram(initialModel())
+	program := tea.NewProgram(initialStoryModel())
 	if _, err := program.Run(); err != nil {
 		log.Fatal(err)
 	}

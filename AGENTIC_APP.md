@@ -1,213 +1,45 @@
-# Agentic Application
+# Agentic Storywriter
+Now, we need to create a new application for our demo. We're going to create an agentic, adventure novel storywriter.
 
-A concurrent Go application that demonstrates an agentic workflow using the OpenAI API. The application coordinates multiple AI agents that work together to generate, analyze, and process content about startup companies.
+We need this application to follow a supervisor agent, agentee structure.
+Goal: User submits a couple of sentences for a story they want written. Supervisor takes over from here, and calls all other sub-agents in a loop.
+Each of the subagents are running persistently as background goroutines. Communication with these agents occurs over channels.
 
-## Architecture
+Many of these operations are independent, so please parallelize them as much as possible.
+Ensure there is a mechanism in place for memory pressure; there is an agent described below which can compact sessions for the supervisor. Use tiktoken (for tiktoken, use the 4o counter) to determine when we are at 70% of the context threshold and compact the session before moving on.
 
-The application consists of five agents working in a scatter-gather pattern:
+Use the correct message types for subagent calling, use context7 and look at the openai documentation. tool calls might be the correct move, but I'll leave that up to you.
 
-```
-                    ┌─────────────────┐
-                    │  Writer Agent   │
-                    │   (Generates    │
-                    │   startup       │
-                    │   content)      │
-                    └─────────┬───────┘
-                              │
-                              ▼
-                    ┌─────────────────┐
-                    │   Writer Output │
-                    │   (Paragraph    │
-                    │   about startup)│
-                    └─────────┬───────┘
-                              │
-                              ▼
-              ┌───────────────┼───────────────┐
-              │               │               │
-              ▼               ▼               ▼
-    ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-    │ Summarizer  │ │   Rater     │ │   Titler    │
-    │   Agent     │ │   Agent     │ │   Agent     │
-    │ (2 sentence │ │ (1-10 with  │ │ (Compelling │
-    │  summary)   │ │explanation) │ │   title)    │
-    └─────────────┘ └─────────────┘ └─────────────┘
-              │               │               │
-              └───────────────┼───────────────┘
-                              │
-                              ▼
-                    ┌─────────────────┐
-                    │   All Results   │
-                    │   Combined      │
-                    └─────────┬───────┘
-                              │
-                              ▼
-                    ┌─────────────────┐
-                    │ Markdown        │
-                    │ Formatter       │
-                    │ Agent           │
-                    │ (Final output)  │
-                    └─────────────────┘
-```
+We need a form of persistence. Have the program create a workspace folder, and store all the output information in there. Need to store the complete results from each of the subagent calls. 
 
-**Flow Description:**
+Agents also need tools to edit files, so they can write their stories. LOCK these tool calls to just the workspace folder. They should be allowed to edit, create, and delete .md files only.
 
-1. **Writer Agent** generates original content about startup companies
-2. **Scatter Phase**: Writer output is sent to three agents concurrently:
-   - **Summarizer Agent** - Creates a two-sentence summary
-   - **Structured Rater Agent** - Provides a 1-10 rating with explanation
-   - **Titler Agent** - Generates a compelling title
-3. **Gather Phase**: All results are collected and combined
-4. **Markdown Formatter Agent** - Formats everything into a beautiful markdown document
+Here are the subagents:
 
-The application consists of five agents:
+- Plot designer: This agent is in charge of designing the story plot. Every plot should look like this:
 
-1. **Writer Agent** - Generates a paragraph about building a startup company
-2. **Summarizer Agent** - Summarizes the paragraph into two sentences
-3. **Structured Rater Agent** - Uses JSON schema to return a structured rating (1-10) with explanation
-4. **Titler Agent** - Creates a compelling title for the content
-5. **Markdown Formatter Agent** - Formats all results into a beautiful markdown document
+1. A background scene is established, and some of the basic worldbuilding rules are established.
+2. The reader's reason for caring is established; some background information on the main protagonist is established as they go about their life.
+3. The hero's journey begins: Something the protagonist wants or needs is introduced, and their life is thrown upside down as a result.
+4. The hero learns Something Horrible will happen if their goals are not achieved
+5. The protagonist fails and suffers, but all is not lost
+6. The hero learns from their mistakes, and they emerge from the situation stronger than before
+7. The hero learns the villian or obstacle or dreadful thing is more powerful, more difficult, or otherwise even scarier than initially perceived.
+8. The hero overcomes anyway. They might barely scrape by, and they should pay a steep price. But a victory takes place nonetheless.
+9. The hero returns and adjusts to new life post-plot, and small or large changes to their environment are now evident.
 
-## Features
+This agent needs to provide an answer to *each* of the above entries at a minimum.
 
-- **Concurrent Processing**: Agents run concurrently using Go channels and goroutines
-- **Structured JSON Output**: Rater agent uses OpenAI's structured output with JSON schema validation
-- **Beautiful Markdown Rendering**: Final output rendered with Charm's Glamour library
-- **Loading Indicators**: Shows spinners while AI agents are processing
-- **Error Handling**: Graceful error handling with styled error messages
-- **Modular Design**: Each agent is in its own file with a common interface
+- Worldbuilder agent: This agent needs to look at the plot, and develop a world in which the plot can take place. Can it take place in the real world? Must it be a fairytale world? Does magic exist? fireballs and dragons? What time period is it set in? Is it an alternate history? The goal is to be creative and come up with something special to enhance the plot.
 
-## Prerequisites
+- Plot expander agent: This agent looks at the initial entries from the plot designer, loads in the information from the worldbuilder, and expands each entry in the plot from a couple of sentences into a full paragraph, checking carefully for plot holes and avoiding the worst cliches, like deus ex machina.
 
-- Go 1.24.5 or later
-- OpenAI API key
+- Character developer: This agent is in charge of looking at the plot, the world design, and drawing up several very special characters. The protagonist, a villian if applicable, and any supporting characters. For every character, the agent needs to come up with a relevant backstory, lore, and descriptive characteristics on their physical form. Characters should all have names that fit their world.
 
-## Installation
+- Author agent: This agent makes things come alive. The goal of the author agent is to actually write the story, one chapter at a time. The chapters should be short, no longer than 2 pages each. The author agent should be given the character information, the worldbuilding information, and the plot expander output.
 
-1. Clone the repository
-2. Install dependencies:
+- Story summarizer agent: This agent takes a completed chapter from an author agent and summarizes it down to a single paragraph, such that the editor and supervisor can keep the whole story in memory at once.
 
-   ```bash
-   go mod tidy
-   ```
+- Supervisor summary agent: this agent takes in the full agentic history in memory, and summarizes it down to the initial prompt, a bulleted list of all things completed, and the full text of the most recent interaction.
 
-3. Set your OpenAI API key by creating a `.env` file:
-
-   ```bash
-   cp .env.sample .env
-   # Edit .env and add your actual API key
-   ```
-
-   Or set it as an environment variable:
-
-   ```bash
-   export OPENAI_API_KEY="your-api-key-here"
-   ```
-
-## Usage
-
-Run the application:
-
-```bash
-go run main.go
-```
-
-The application will:
-
-1. Generate a paragraph about startup companies using the writer agent
-2. Concurrently process the paragraph with four agents:
-   - Summarizer: Creates a two-sentence summary
-   - Rater: Provides a structured helpfulness/accuracy rating (1-10)
-   - Titler: Generates a compelling title
-   - MarkdownFormatter: Compiles everything into beautiful markdown
-3. Display the final result with stunning terminal markdown rendering
-
-## Project Structure
-
-```
-.
-├── main.go                 # Main application with UI (much simpler now!)
-├── agent/
-│   ├── agent.go           # Agent interface and configuration
-│   ├── base.go            # Base agent with OpenAI integration and timeouts
-│   ├── workflow.go        # Workflow orchestration (handles all complexity)
-│   ├── writer.go          # Content writer agent
-│   ├── summarizer.go      # Text summarizer agent
-│   ├── structured_rater.go # Structured JSON rater agent with schema validation
-│   ├── titler.go          # Title generator agent
-│   └── markdown_formatter.go # Markdown formatter agent
-├── go.mod
-├── go.sum
-└── README.md
-```
-
-## Clean Architecture
-
-The application now follows a much cleaner architecture:
-
-- **main.go**: Only handles UI and calls the workflow
-- **agent/workflow.go**: Contains all orchestration logic, timeouts, and error handling
-- **agent/base.go**: Handles OpenAI API calls with built-in timeouts
-- **Individual agents**: Focus only on their specific tasks
-
-## Key Improvements
-
-- **Separation of Concerns**: UI logic separated from business logic
-- **Built-in Timeouts**: All agents have automatic timeout handling
-- **Simplified Error Handling**: Centralized in the workflow package
-- **Cleaner Main**: No complex channel orchestration in main.go
-- **Reusable Workflow**: The workflow can be used independently of the UI
-
-## Agent Interface
-
-All agents implement the `Agent` interface:
-
-```go
-type Agent interface {
-    Start(ctx context.Context, input <-chan string, output chan<- string) error
-}
-```
-
-Each agent is configured with:
-
-- **Name**: Agent identifier
-- **Model**: OpenAI model to use (gpt-4o)
-- **Prompt**: Agent-specific system prompt
-
-## Dependencies
-
-- `github.com/openai/openai-go` - Official OpenAI Go client with structured output support
-- `github.com/charmbracelet/glamour` - Terminal markdown renderer
-- `github.com/charmbracelet/lipgloss` - Terminal styling
-- `github.com/charmbracelet/bubbles` - Terminal UI components
-- `github.com/charmbracelet/bubbletea` - Terminal UI framework
-- `github.com/joho/godotenv` - Environment variable loading from .env files
-- `github.com/invopop/jsonschema` - JSON schema generation for structured outputs
-
-## Example Output
-
-The application now displays results as beautifully rendered markdown instead of styled boxes:
-
-- **Structured Rating**: The rater agent returns a guaranteed integer 1-10 with explanation using JSON schema validation
-- **Markdown Formatting**: All results are compiled into a professional markdown document
-- **Glamour Rendering**: The final markdown is rendered with syntax highlighting and beautiful formatting
-- **Error Handling**: Individual agent results shown if any errors occur
-- **Loading Spinner**: Animated spinner while processing (typically 60-90 seconds)
-
-The final output includes:
-
-- Original startup content from the writer
-- Two-sentence summary
-- Structured rating (e.g., "8/10 - Comprehensive and practical advice...")
-- Compelling title
-- All formatted as a beautiful markdown document with headers, formatting, and structure
-
-## Error Handling
-
-The application handles various error scenarios:
-
-- Missing OpenAI API key
-- API call failures
-- Network timeouts
-- Agent communication errors
-
-All errors are displayed in styled red boxes with clear error messages.
+- Editor agent: This agent needs to run at least once per chapter. Here, the editor is in charge of making sure the story is coherent across the chapters. The editor should be fed in the summaries of every chapter, plus the full current chapter, and can edit the text to make sure there are no plot holes or major contradictions.

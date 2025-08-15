@@ -6,6 +6,61 @@ This is the repository for the LinkedIn Learning course `Concurrent Programming 
 
 _See the readme file in the main branch for updated instructions and information._
 
+## Applications
+
+This repository contains two AI-powered applications demonstrating concurrent programming patterns:
+
+### 1. Original Demo Application
+**Location**: `main.go`
+**Description**: Demonstrates basic agentic workflow with startup company content generation.
+
+**Agents**:
+- Writer - Generates content about startup companies
+- Summarizer - Creates concise summaries  
+- Rater - Provides structured ratings (1-10)
+- Titler - Generates compelling titles
+- MarkdownFormatter - Formats results as markdown
+
+**Usage**:
+```bash
+go run main.go
+```
+
+### 2. Agentic Storywriter
+**Location**: `cmd/storywriter/main.go`
+**Description**: Advanced multi-agent system for collaborative story writing following a supervisor-agent architecture.
+
+**Agents**:
+- **Plot Designer** - Creates 9-point story structure following the hero's journey
+- **Worldbuilder** - Develops story world, setting, and rules (fantasy, sci-fi, historical, etc.)
+- **Plot Expander** - Expands plot points into detailed paragraphs, checks for plot holes
+- **Character Developer** - Creates protagonist, villain, and supporting characters with backstories
+- **Author** - Writes story chapters (2 pages each)
+- **Story Summarizer** - Creates chapter summaries for memory management
+- **Editor** - Reviews and edits chapters for coherence across the story
+- **Supervisor Summary** - Manages memory pressure and session compaction
+
+**Features**:
+- **Concurrent Processing**: Agents run as persistent background goroutines
+- **Memory Management**: Uses tiktoken to monitor context usage and compact sessions at 70% threshold
+- **Secure File Operations**: Agents can only create/edit .md files within the workspace folder
+- **Parallel Execution**: Independent operations are parallelized for efficiency
+- **Persistent Storage**: All outputs saved to workspace folder for review
+
+**Usage**:
+```bash
+go run ./cmd/storywriter
+```
+
+**Output**: All generated content is saved to the `workspace/` folder as markdown files:
+- `plot_design.md` - Initial story structure
+- `world_building.md` - World and setting details  
+- `plot_expansion.md` - Expanded plot details
+- `characters.md` - Character profiles and backstories
+- `chapter_N.md` - Original chapters
+- `chapter_N_edited.md` - Edited chapters
+- `story_summary.md` - Complete story summary
+
 ## Instructions
 
 This repository has branches for each of the videos in the course. You can use the branch pop up menu in github to switch to a specific branch and take a look at the course at that stage, or you can add `/tree/BRANCH_NAME` to the URL to go to the branch you want to access.
@@ -35,7 +90,22 @@ Commit changes using this command: git commit -m "some message"
    - fd-find (`fd` command)
    - [crush](https://charm.land/crush)
 2. Clone this repository into your local machine using the terminal (Mac), CMD (Windows), or a GUI tool like SourceTree.
-3. Launch `crush` and configure your AI provider API key and model.
+3. Set your OpenAI API key: `export OPENAI_API_KEY=your_key_here` or create a `.env` file
+4. Launch `crush` and configure your AI provider API key and model.
+
+## Environment Setup
+
+Both applications require an OpenAI API key. Set it using one of these methods:
+
+1. **Environment Variable**:
+   ```bash
+   export OPENAI_API_KEY=your_key_here
+   ```
+
+2. **Create .env file**:
+   ```
+   OPENAI_API_KEY=your_key_here
+   ```
 
 [0]: # "Replace these placeholder URLs with actual course URLs"
 [lil-course-url]: https://www.linkedin.com/learning/
