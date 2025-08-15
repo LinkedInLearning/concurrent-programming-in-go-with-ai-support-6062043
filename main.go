@@ -51,11 +51,11 @@ func initialStoryModel() storyModel {
 	// Initialize spinners for each agent
 	agentNames := []string{
 		"Plot Designer",
-		"Worldbuilder", 
+		"Worldbuilder",
 		"Plot Expander",
 		"Character Developer",
 		"Author (Ch 1)",
-		"Author (Ch 2)", 
+		"Author (Ch 2)",
 		"Author (Ch 3)",
 		"Author (Ch 4)",
 		"Author (Ch 5)",
@@ -66,7 +66,7 @@ func initialStoryModel() storyModel {
 		"Story Summarizer",
 		"Editor",
 	}
-	
+
 	agentStatuses := make([]AgentStatus, len(agentNames))
 	for i, name := range agentNames {
 		s := spinner.New()
@@ -79,12 +79,29 @@ func initialStoryModel() storyModel {
 			spinner: s,
 		}
 	}
-	
-	return storyModel{
+
+	model := storyModel{
 		status:        "Enter your story prompt and press Enter to begin...",
 		agentStatuses: agentStatuses,
 		currentStep:   -1,
 	}
+
+	// Check if there are existing workspace files to auto-resume
+	if hasExistingWorkspace() {
+		model.status = "Found existing story in progress. Resuming automatically..."
+		model.userInput = "auto-resume" // Special flag for auto-resume
+	}
+
+	return model
+}
+
+// hasExistingWorkspace checks if there are any story files in the workspace
+func hasExistingWorkspace() bool {
+	// Only check for story_prompt.md - the first file that gets created
+	if _, err := os.Stat("workspace/story_prompt.md"); err == nil {
+		return true
+	}
+	return false
 }
 
 func (m storyModel) Init() tea.Cmd {
@@ -93,12 +110,22 @@ func (m storyModel) Init() tea.Cmd {
 	for i := range m.agentStatuses {
 		cmds = append(cmds, m.agentStatuses[i].spinner.Tick)
 	}
+
+	// Auto-start if we have existing workspace
+	if m.userInput == "auto-resume" {
+		cmds = append(cmds, func() tea.Msg {
+			// Small delay to show the resume message
+			time.Sleep(time.Millisecond * 500)
+			return tea.KeyMsg{Type: tea.KeyEnter}
+		})
+	}
+
 	return tea.Batch(cmds...)
 }
 
 func (m storyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -128,7 +155,7 @@ func (m storyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		
+
 	case progressUpdateMsg:
 		// Update agent status based on progress update
 		if msg.update.AgentName != "" {
@@ -151,7 +178,7 @@ func (m storyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.isProcessing {
 			cmds = append(cmds, m.listenForProgress())
 		}
-		
+
 	case spinner.TickMsg:
 		// Update spinners for running agents
 		if m.isProcessing {
@@ -165,17 +192,23 @@ func (m storyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		
+
 	case storyCompleteMsg:
 		m.isProcessing = false
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = fmt.Sprintf("Error: %v", msg.err)
 		} else {
-			m.status = "Story creation complete! Check the 'workspace' folder for all generated files."
+			m.status = "🎉 STORY COMPLETE! 🎉\n\nYour complete story has been generated and saved to the 'workspace' folder.\nCheck 'full_story_complete.md' for the complete story.\n\nPress any key to exit..."
 		}
+		// Exit after showing completion message
+		return m, tea.Batch(
+			tea.Tick(time.Second*3, func(t time.Time) tea.Msg {
+				return tea.Quit()
+			}),
+		)
 	}
-	
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -195,8 +228,6 @@ func (m storyModel) listenForProgress() tea.Cmd {
 	}
 }
 
-
-
 func (m storyModel) startStoryCreation() (tea.Model, tea.Cmd) {
 	apiKey := os.Getenv(StoryEnvOpenAIAPIKey)
 	if apiKey == "" {
@@ -204,6 +235,9 @@ func (m storyModel) startStoryCreation() (tea.Model, tea.Cmd) {
 		m.status = "Error: OPENAI_API_KEY not set"
 		return m, nil
 	}
+
+	// Handle auto-resume case
+	var userPrompt = m.userInput 
 
 	workflow, err := agent.NewStoryWorkflow(apiKey)
 	if err != nil {
@@ -214,8 +248,12 @@ func (m storyModel) startStoryCreation() (tea.Model, tea.Cmd) {
 
 	m.workflow = workflow
 	m.isProcessing = true
-	m.status = "Creating your story... This may take several minutes."
-	
+	if m.userInput == "auto-resume" {
+		m.status = "Resuming story creation from existing progress..."
+	} else {
+		m.status = "Creating your story... This may take several minutes."
+	}
+
 	// Start the first agent (Plot Designer) immediately
 	if len(m.agentStatuses) > 0 {
 		m.agentStatuses[0].status = "started"
@@ -227,7 +265,7 @@ func (m storyModel) startStoryCreation() (tea.Model, tea.Cmd) {
 		// Start the story creation workflow
 		func() tea.Msg {
 			ctx := context.WithoutCancel(context.Background())
-			err := workflow.ExecuteStoryCreation(ctx, m.userInput)
+			err := workflow.ExecuteStoryCreation(ctx, userPrompt)
 			return storyCompleteMsg{err: err}
 		},
 		// Start listening for progress updates
@@ -277,12 +315,12 @@ func (m storyModel) View() string {
 	if m.isProcessing {
 		s += "\n\n"
 		s += "🔄 Story Creation Progress:\n\n"
-		
+
 		// Display each agent's status with spinners
 		for _, agent := range m.agentStatuses {
 			var statusIcon string
 			var statusColor lipgloss.Color
-			
+
 			switch agent.status {
 			case "waiting":
 				statusIcon = "⏳"
@@ -300,14 +338,14 @@ func (m storyModel) View() string {
 				statusIcon = "⏳"
 				statusColor = lipgloss.Color("#626262")
 			}
-			
+
 			agentStyle := lipgloss.NewStyle().Foreground(statusColor)
-			s += fmt.Sprintf("%s %s - %s\n", 
-				statusIcon, 
-				agentStyle.Render(agent.name), 
+			s += fmt.Sprintf("%s %s - %s\n",
+				statusIcon,
+				agentStyle.Render(agent.name),
 				agentStyle.Render(agent.message))
 		}
-		
+
 		s += "\n💡 Tip: This process may take several minutes as each agent works on your story."
 	}
 
