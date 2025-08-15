@@ -130,7 +130,7 @@ The Agentic Storywriter is a sophisticated multi-agent system that collaborative
 │  ┌────────────────────────────────────────────────────────────────────────────┐ │
 │  │                          OPENAI API                                        │ │
 │  │                                                                            │ │
-│  │  • GPT-4o Model Calls                                                      │ │
+│  │  • GPT-5-mini Model Calls                                                  │ │
 │  │  • Specialized Agent Prompts                                               │ │
 │  │  • Context Management                                                      │ │
 │  │  • Token Usage Monitoring                                                  │ │
@@ -162,7 +162,7 @@ CONCURRENCY PATTERNS:
 
 ### Memory Management
 
-- **Token Counting**: Uses tiktoken with GPT-4o counter to monitor context usage
+- **Token Counting**: Uses tiktoken with GPT-5 counter to monitor context usage
 - **Automatic Compaction**: Compacts session history when reaching 70% of context threshold
 - **Session Persistence**: Maintains conversation history throughout the workflow
 

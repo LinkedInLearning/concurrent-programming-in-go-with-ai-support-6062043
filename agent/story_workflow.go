@@ -75,6 +75,14 @@ func (sw *StoryWorkflow) ExecuteStoryCreation(ctx context.Context, userPrompt st
 	// Check for existing progress
 	resumeFrom, existingData := sw.checkWorkspaceProgress()
 	
+	// Load original prompt if resuming, otherwise use provided prompt
+	originalPrompt := userPrompt
+	if resumeFrom != "start" {
+		if data, exists := existingData["story_prompt"]; exists {
+			originalPrompt = data
+		}
+	}
+	
 	// Variables to hold story components
 	var plotDesign, worldBuilding, plotExpansion, characters string
 	var err error
@@ -85,7 +93,7 @@ func (sw *StoryWorkflow) ExecuteStoryCreation(ctx context.Context, userPrompt st
 	
 	// Save the initial story prompt (if not resuming)
 	if resumeFrom == "start" {
-		if err := sw.saveToWorkspace("story_prompt.md", fmt.Sprintf("# Story Prompt\n\n%s", userPrompt)); err != nil {
+		if err := sw.saveToWorkspace("story_prompt.md", fmt.Sprintf("# Story Prompt\n\n%s", originalPrompt)); err != nil {
 			return fmt.Errorf("failed to save story prompt: %w", err)
 		}
 	}
@@ -93,7 +101,7 @@ func (sw *StoryWorkflow) ExecuteStoryCreation(ctx context.Context, userPrompt st
 	// Step 1: Plot Design
 	if resumeFrom == "start" || resumeFrom == "plot_design" {
 		sw.sendProgress("Plot Designer", "started", "Creating story structure...", nil)
-		plotDesign, err = sw.executeAgentTask(ctx, "plot_designer", userPrompt)
+		plotDesign, err = sw.executeAgentTask(ctx, "plot_designer", originalPrompt)
 		if err != nil {
 			sw.sendProgress("Plot Designer", "error", "Failed to create plot", err)
 			return fmt.Errorf("plot design failed: %w", err)
@@ -116,7 +124,8 @@ func (sw *StoryWorkflow) ExecuteStoryCreation(ctx context.Context, userPrompt st
 	// Step 2: World Building
 	if resumeFrom == "start" || resumeFrom == "plot_design" || resumeFrom == "world_building" {
 		sw.sendProgress("Worldbuilder", "started", "Designing story world...", nil)
-		worldBuilding, err = sw.executeAgentTask(ctx, "worldbuilder", plotDesign)
+		worldBuildingInput := fmt.Sprintf("Original Story Prompt:\n%s\n\nPlot Design:\n%s", originalPrompt, plotDesign)
+		worldBuilding, err = sw.executeAgentTask(ctx, "worldbuilder", worldBuildingInput)
 		if err != nil {
 			sw.sendProgress("Worldbuilder", "error", "Failed to create world", err)
 			return fmt.Errorf("world building failed: %w", err)
@@ -139,7 +148,7 @@ func (sw *StoryWorkflow) ExecuteStoryCreation(ctx context.Context, userPrompt st
 	// Step 3: Plot Expansion
 	if resumeFrom == "start" || resumeFrom == "plot_design" || resumeFrom == "world_building" || resumeFrom == "plot_expansion" {
 		sw.sendProgress("Plot Expander", "started", "Expanding plot details...", nil)
-		plotExpansionInput := fmt.Sprintf("Plot Design:\n%s\n\nWorld Building:\n%s", plotDesign, worldBuilding)
+		plotExpansionInput := fmt.Sprintf("Original Story Prompt:\n%s\n\nPlot Design:\n%s\n\nWorld Building:\n%s", originalPrompt, plotDesign, worldBuilding)
 		plotExpansion, err = sw.executeAgentTask(ctx, "plot_expander", plotExpansionInput)
 		if err != nil {
 			sw.sendProgress("Plot Expander", "error", "Failed to expand plot", err)
@@ -191,16 +200,66 @@ func (sw *StoryWorkflow) ExecuteStoryCreation(ctx context.Context, userPrompt st
 	chapters := make([]string, 9)
 	chapterSummaries := make([]string, 9)
 	
-	// Channel to collect summary results
-	summaryResults := make(chan struct {
-		index   int
-		summary string
-		err     error
-	}, 9)
-	
-	summariesStarted := 0
-	
-	for i := 1; i <= 9; i++ {
+	// Check if we should skip to editing phase
+	if resumeFrom == "editing" {
+		// Load all existing chapters and summaries for editing
+		for i := 1; i <= 9; i++ {
+			if chapterData, exists := existingData[fmt.Sprintf("chapter_%d", i)]; exists {
+				// Extract chapter content
+				lines := strings.Split(chapterData, "\n")
+				chapter := ""
+				for j, line := range lines {
+					if strings.HasPrefix(line, "# Chapter") {
+						// Skip header and empty lines
+						for k := j + 1; k < len(lines) && strings.TrimSpace(lines[k]) == ""; k++ {
+							j = k
+						}
+						if j+1 < len(lines) {
+							chapter = strings.Join(lines[j+1:], "\n")
+						}
+						break
+					}
+				}
+				if chapter == "" {
+					chapter = chapterData // Fallback
+				}
+				chapters[i-1] = chapter
+			}
+			
+			// Load existing summaries
+			if summaryData, exists := existingData[fmt.Sprintf("chapter_%d_summary", i)]; exists {
+				lines := strings.Split(summaryData, "\n")
+				summary := ""
+				for j, line := range lines {
+					if strings.HasPrefix(line, "# Chapter") && strings.Contains(line, "Summary") {
+						// Skip header and empty lines
+						for k := j + 1; k < len(lines) && strings.TrimSpace(lines[k]) == ""; k++ {
+							j = k
+						}
+						if j+1 < len(lines) {
+							summary = strings.Join(lines[j+1:], "\n")
+						}
+						break
+					}
+				}
+				if summary == "" {
+					summary = summaryData // Fallback
+				}
+				chapterSummaries[i-1] = summary
+			}
+		}
+	} else {
+		// Normal chapter writing and summarization flow
+		// Channel to collect summary results
+		summaryResults := make(chan struct {
+			index   int
+			summary string
+			err     error
+		}, 9)
+		
+		summariesStarted := 0
+		
+		for i := 1; i <= 9; i++ {
 		var chapter string
 		var err error
 		
@@ -330,6 +389,7 @@ func (sw *StoryWorkflow) ExecuteStoryCreation(ctx context.Context, userPrompt st
 		chapterSummaries[result.index] = result.summary
 		sw.addCompletedTask(fmt.Sprintf("Chapter %d Summarized", result.index+1))
 	}
+	} // Close the else block
 	
 	// Phase 3: Edit all chapters using all summaries
 	allSummariesText := strings.Join(chapterSummaries, "\n")
@@ -395,7 +455,7 @@ func (sw *StoryWorkflow) executeAgentTask(ctx context.Context, agentName, input 
 	outputChan := make(chan string, 1)
 	
 	// Start agent in goroutine
-	agentCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	agentCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
 	defer cancel()
 	
 	go func() {
@@ -467,19 +527,22 @@ func (sw *StoryWorkflow) checkWorkspaceProgress() (resumeFrom string, existingDa
 	}
 	
 	// Check chapters and summaries
-	chaptersComplete := 0
+	originalChaptersComplete := 0
+	allEditedComplete := true
+	
 	for i := 1; i <= 9; i++ {
+		// Check for original chapter
+		if content, exists, _ := sw.loadFromWorkspace(fmt.Sprintf("chapter_%d.md", i)); exists {
+			existingData[fmt.Sprintf("chapter_%d", i)] = content
+			originalChaptersComplete = i
+		}
+		
 		// Check for edited chapter
 		if content, exists, _ := sw.loadFromWorkspace(fmt.Sprintf("chapter_%d_edited.md", i)); exists {
 			existingData[fmt.Sprintf("chapter_%d_edited", i)] = content
-			chaptersComplete = i
-		} else {
-			break
-		}
-		
-		// Also load original chapter if it exists
-		if content, exists, _ := sw.loadFromWorkspace(fmt.Sprintf("chapter_%d.md", i)); exists {
-			existingData[fmt.Sprintf("chapter_%d", i)] = content
+		} else if originalChaptersComplete >= i {
+			// Original chapter exists but not edited yet
+			allEditedComplete = false
 		}
 		
 		// Load chapter summary if it exists
@@ -488,8 +551,14 @@ func (sw *StoryWorkflow) checkWorkspaceProgress() (resumeFrom string, existingDa
 		}
 	}
 	
-	if chaptersComplete < 9 {
-		return fmt.Sprintf("chapter_%d", chaptersComplete+1), existingData
+	// Determine resume point based on what's missing
+	if originalChaptersComplete < 9 {
+		// Still need to write original chapters
+		return fmt.Sprintf("chapter_%d", originalChaptersComplete+1), existingData
+	} else if !allEditedComplete {
+		// All original chapters exist, but editing is incomplete
+		// Resume from editing phase
+		return "editing", existingData
 	}
 	
 	return "complete", existingData

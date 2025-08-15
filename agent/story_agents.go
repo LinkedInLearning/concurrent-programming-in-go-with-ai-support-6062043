@@ -15,10 +15,10 @@ type StoryAgent struct {
 func NewStoryAgent(agentType, prompt, apiKey string) *StoryAgent {
 	config := Config{
 		Name:   agentType,
-		Model:  "gpt-4o",
+		Model:  "gpt-5",
 		Prompt: prompt,
 	}
-	
+
 	return &StoryAgent{
 		BaseAgent: NewBaseAgent(config, apiKey),
 		agentType: agentType,
@@ -35,13 +35,13 @@ func (s *StoryAgent) Start(ctx context.Context, input <-chan string, output chan
 			if !ok {
 				return nil
 			}
-			
+
 			response, err := s.callOpenAI(ctx, prompt)
 			if err != nil {
 				output <- fmt.Sprintf("Error from %s: %v", s.agentType, err)
 				continue
 			}
-			
+
 			output <- response
 		}
 	}

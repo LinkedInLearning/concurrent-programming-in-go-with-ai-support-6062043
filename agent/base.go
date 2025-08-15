@@ -27,7 +27,7 @@ func NewBaseAgent(config Config, apiKey string) *BaseAgent {
 // callOpenAI makes a chat completion request to the OpenAI API with the given prompt.
 func (a *BaseAgent) callOpenAI(ctx context.Context, prompt string) (string, error) {
 	// Add timeout to the context for OpenAI calls
-	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	callCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 
 	completion, err := a.client.Chat.Completions.New(callCtx, openai.ChatCompletionNewParams{
@@ -35,7 +35,7 @@ func (a *BaseAgent) callOpenAI(ctx context.Context, prompt string) (string, erro
 			openai.SystemMessage(a.Config.Prompt),
 			openai.UserMessage(prompt),
 		},
-		Model: openai.ChatModelGPT4o,
+		Model: "gpt-5",
 	})
 	if err != nil {
 		return "", fmt.Errorf("OpenAI API call failed: %w", err)
