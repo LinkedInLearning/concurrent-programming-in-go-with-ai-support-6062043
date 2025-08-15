@@ -18,7 +18,7 @@ func NewTokenCounter() (*TokenCounter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create tokenizer: %w", err)
 	}
-	
+
 	return &TokenCounter{
 		encoder: encoder,
 	}, nil
@@ -34,7 +34,7 @@ func (tc *TokenCounter) CountTokens(text string) int {
 func (tc *TokenCounter) IsAtThreshold(text string) bool {
 	const maxTokens = 128000
 	const threshold = 0.7
-	
+
 	tokenCount := tc.CountTokens(text)
 	return float64(tokenCount) >= float64(maxTokens)*threshold
 }
@@ -51,7 +51,7 @@ func NewSessionMemory() (*SessionMemory, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &SessionMemory{
 		history:      make([]string, 0),
 		tokenCounter: tc,

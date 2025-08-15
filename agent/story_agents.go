@@ -27,6 +27,11 @@ func NewStoryAgent(agentType, prompt, apiKey string) *StoryAgent {
 
 // Start implements the Agent interface for story agents
 func (s *StoryAgent) Start(ctx context.Context, input <-chan string, output chan<- string) error {
+	return s.StartWithTracking(ctx, input, output, nil)
+}
+
+// StartWithTracking implements the Agent interface with token tracking support
+func (s *StoryAgent) StartWithTracking(ctx context.Context, input <-chan string, output chan<- string, tracker *SystemTokenTracker) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -36,7 +41,7 @@ func (s *StoryAgent) Start(ctx context.Context, input <-chan string, output chan
 				return nil
 			}
 
-			response, err := s.callOpenAI(ctx, prompt)
+			response, err := s.callOpenAIWithTracking(ctx, prompt, tracker)
 			if err != nil {
 				output <- fmt.Sprintf("Error from %s: %v", s.agentType, err)
 				continue
@@ -45,4 +50,14 @@ func (s *StoryAgent) Start(ctx context.Context, input <-chan string, output chan
 			output <- response
 		}
 	}
+}
+
+// CallWithTracking provides a direct way to call the agent with token tracking
+func (s *StoryAgent) CallWithTracking(ctx context.Context, prompt string, tracker *SystemTokenTracker) (string, error) {
+	return s.CallWithTrackingName(ctx, prompt, tracker, s.agentType)
+}
+
+// CallWithTrackingName provides a direct way to call the agent with token tracking using a custom name
+func (s *StoryAgent) CallWithTrackingName(ctx context.Context, prompt string, tracker *SystemTokenTracker, trackingName string) (string, error) {
+	return s.callOpenAIWithTrackingName(ctx, prompt, tracker, trackingName)
 }

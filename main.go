@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"concurrent-programming-go-agents/agent"
@@ -20,12 +22,13 @@ const (
 )
 
 type AgentStatus struct {
-	name      string
-	status    string // "waiting", "running", "completed", "error"
-	message   string
-	spinner   spinner.Model
-	startTime time.Time
-	endTime   time.Time
+	name       string
+	status     string // "waiting", "running", "completed", "error"
+	message    string
+	spinner    spinner.Model
+	startTime  time.Time
+	endTime    time.Time
+	tokenUsage *agent.TokenUsage // NEW: Token usage for this agent
 }
 
 type storyModel struct {
@@ -37,6 +40,8 @@ type storyModel struct {
 	agentStatuses []AgentStatus
 	currentStep   int
 	progressChan  chan agent.ProgressUpdate
+	totalCost     float64 // NEW: Total cost tracking
+	totalTokens   int     // NEW: Total token tracking
 }
 
 type storyCompleteMsg struct {
@@ -163,6 +168,7 @@ func (m storyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.agentStatuses[i].name == msg.update.AgentName {
 					m.agentStatuses[i].status = msg.update.Status
 					m.agentStatuses[i].message = msg.update.Message
+					m.agentStatuses[i].tokenUsage = msg.update.TokenUsage // NEW: Update token usage
 					if msg.update.Status == "started" {
 						m.agentStatuses[i].startTime = time.Now()
 						// Start the spinner for this agent
@@ -174,6 +180,9 @@ func (m storyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		// Update total cost and tokens
+		m.totalCost = msg.update.TotalCost
+		m.totalTokens = msg.update.TotalTokens
 		// Continue listening for progress updates
 		if m.isProcessing {
 			cmds = append(cmds, m.listenForProgress())
@@ -237,7 +246,7 @@ func (m storyModel) startStoryCreation() (tea.Model, tea.Cmd) {
 	}
 
 	// Handle auto-resume case
-	var userPrompt = m.userInput 
+	var userPrompt = m.userInput
 
 	workflow, err := agent.NewStoryWorkflow(apiKey)
 	if err != nil {
@@ -248,6 +257,11 @@ func (m storyModel) startStoryCreation() (tea.Model, tea.Cmd) {
 
 	m.workflow = workflow
 	m.isProcessing = true
+	
+	// Initialize UI with current token data
+	m.totalCost = workflow.GetTotalCost()
+	m.totalTokens = workflow.GetTotalTokens()
+	
 	if m.userInput == "auto-resume" {
 		m.status = "Resuming story creation from existing progress..."
 	} else {
@@ -314,9 +328,17 @@ func (m storyModel) View() string {
 
 	if m.isProcessing {
 		s += "\n\n"
+
+		// Add cost and token tracking display
+		costStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575")).Bold(true)
+		tokenStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
+
+		s += costStyle.Render(fmt.Sprintf("💰 Total Cost: $%.4f", m.totalCost)) + "  "
+		s += tokenStyle.Render(fmt.Sprintf("🔢 Total Tokens: %s", formatNumber(m.totalTokens))) + "\n\n"
+
 		s += "🔄 Story Creation Progress:\n\n"
 
-		// Display each agent's status with spinners
+		// Display each agent's status with spinners and token info
 		for _, agent := range m.agentStatuses {
 			var statusIcon string
 			var statusColor lipgloss.Color
@@ -344,12 +366,36 @@ func (m storyModel) View() string {
 				statusIcon,
 				agentStyle.Render(agent.name),
 				agentStyle.Render(agent.message))
+
+			// Add token usage info for completed agents
+			if agent.tokenUsage != nil && agent.tokenUsage.TotalTokens > 0 {
+				tokenInfo := lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render(
+					fmt.Sprintf("   💸 $%.4f (%s tokens)", agent.tokenUsage.Cost, formatNumber(agent.tokenUsage.TotalTokens)))
+				s += tokenInfo + "\n"
+			}
 		}
 
 		s += "\n💡 Tip: This process may take several minutes as each agent works on your story."
 	}
 
 	return s
+}
+
+// formatNumber formats a number with commas for better readability
+func formatNumber(n int) string {
+	str := strconv.Itoa(n)
+	if len(str) <= 3 {
+		return str
+	}
+
+	var result strings.Builder
+	for i, digit := range str {
+		if i > 0 && (len(str)-i)%3 == 0 {
+			result.WriteString(",")
+		}
+		result.WriteRune(digit)
+	}
+	return result.String()
 }
 
 func main() {

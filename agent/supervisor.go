@@ -19,7 +19,7 @@ func NewStorySupervisor(apiKey string) (*StorySupervisor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create workspace: %w", err)
 	}
-	
+
 	return &StorySupervisor{
 		workspace: workspace,
 		agents:    make(map[string]*StoryAgent),
@@ -31,9 +31,9 @@ func NewStorySupervisor(apiKey string) (*StorySupervisor, error) {
 func (s *StorySupervisor) InitializeAgents() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	// Plot Designer Agent
-	s.agents["plot_designer"] = NewStoryAgent("plot_designer", 
+	s.agents["plot_designer"] = NewStoryAgent("plot_designer",
 		`You are a plot designer agent. Create a story plot following this exact structure:
 1. Background scene and worldbuilding rules
 2. Reader's reason for caring and protagonist background
@@ -82,4 +82,9 @@ func (s *StorySupervisor) GetAgent(name string) (*StoryAgent, bool) {
 	defer s.mu.RUnlock()
 	agent, exists := s.agents[name]
 	return agent, exists
+}
+
+// GetWorkspace returns the workspace manager
+func (s *StorySupervisor) GetWorkspace() *WorkspaceManager {
+	return s.workspace
 }
