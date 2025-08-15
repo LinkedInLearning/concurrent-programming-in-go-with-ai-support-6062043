@@ -59,6 +59,10 @@ func initialStoryModel() storyModel {
 		"Author (Ch 3)",
 		"Author (Ch 4)",
 		"Author (Ch 5)",
+		"Author (Ch 6)",
+		"Author (Ch 7)",
+		"Author (Ch 8)",
+		"Author (Ch 9)",
 		"Story Summarizer",
 		"Editor",
 	}

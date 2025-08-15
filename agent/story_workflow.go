@@ -184,49 +184,171 @@ func (sw *StoryWorkflow) ExecuteStoryCreation(ctx context.Context, userPrompt st
 		}
 	}
 	
-	// Step 5: Write chapters
-	chapterSummaries := make([]string, 0)
+	// Step 5: Write chapters and summarize in parallel
 	authorInput := fmt.Sprintf("Characters:\n%s\n\nWorld:\n%s\n\nExpanded Plot:\n%s", characters, worldBuilding, plotExpansion)
 	
-	// Write 5 chapters (can be adjusted)
-	for i := 1; i <= 5; i++ {
-		// Write chapter
-		sw.sendProgress(fmt.Sprintf("Author (Ch %d)", i), "started", fmt.Sprintf("Writing chapter %d...", i), nil)
-		chapterPrompt := fmt.Sprintf("%s\n\nWrite Chapter %d of the story.", authorInput, i)
-		chapter, err := sw.executeAgentTask(ctx, "author", chapterPrompt)
-		if err != nil {
-			sw.sendProgress(fmt.Sprintf("Author (Ch %d)", i), "error", fmt.Sprintf("Failed to write chapter %d", i), err)
-			return fmt.Errorf("chapter %d writing failed: %w", i, err)
-		}
-		sw.sendProgress(fmt.Sprintf("Author (Ch %d)", i), "completed", fmt.Sprintf("Chapter %d written", i), nil)
+	// Phase 1: Write all chapters and start summarization in parallel
+	chapters := make([]string, 9)
+	chapterSummaries := make([]string, 9)
+	
+	// Channel to collect summary results
+	summaryResults := make(chan struct {
+		index   int
+		summary string
+		err     error
+	}, 9)
+	
+	summariesStarted := 0
+	
+	for i := 1; i <= 9; i++ {
+		var chapter string
+		var err error
 		
-		// Save chapter
-		chapterFilename := fmt.Sprintf("chapter_%d.md", i)
-		if err := sw.saveToWorkspace(chapterFilename, fmt.Sprintf("# Chapter %d\n\n%s", i, chapter)); err != nil {
-			return fmt.Errorf("failed to save chapter %d: %w", i, err)
+		// Check if chapter already exists (resume logic)
+		if chapterData, exists := existingData[fmt.Sprintf("chapter_%d", i)]; exists {
+			// Chapter exists, extract content
+			lines := strings.Split(chapterData, "\n")
+			for j, line := range lines {
+				if strings.HasPrefix(line, "# Chapter") {
+					// Skip header and empty lines
+					for k := j + 1; k < len(lines) && strings.TrimSpace(lines[k]) == ""; k++ {
+						j = k
+					}
+					if j+1 < len(lines) {
+						chapter = strings.Join(lines[j+1:], "\n")
+					}
+					break
+				}
+			}
+			if chapter == "" {
+				chapter = chapterData // Fallback
+			}
+			sw.sendProgress(fmt.Sprintf("Author (Ch %d)", i), "completed", fmt.Sprintf("Loaded existing chapter %d", i), nil)
+		} else {
+			// Write new chapter
+			sw.sendProgress(fmt.Sprintf("Author (Ch %d)", i), "started", fmt.Sprintf("Writing chapter %d...", i), nil)
+			chapterPrompt := fmt.Sprintf("%s\n\nWrite Chapter %d of the story.", authorInput, i)
+			chapter, err = sw.executeAgentTask(ctx, "author", chapterPrompt)
+			if err != nil {
+				sw.sendProgress(fmt.Sprintf("Author (Ch %d)", i), "error", fmt.Sprintf("Failed to write chapter %d", i), err)
+				return fmt.Errorf("chapter %d writing failed: %w", i, err)
+			}
+			sw.sendProgress(fmt.Sprintf("Author (Ch %d)", i), "completed", fmt.Sprintf("Chapter %d written", i), nil)
+			
+			// Save chapter
+			chapterFilename := fmt.Sprintf("chapter_%d.md", i)
+			if err := sw.saveToWorkspace(chapterFilename, fmt.Sprintf("# Chapter %d\n\n%s", i, chapter)); err != nil {
+				return fmt.Errorf("failed to save chapter %d: %w", i, err)
+			}
 		}
 		
-		// Summarize chapter (as per spec: once per chapter)
-		sw.sendProgress("Story Summarizer", "started", fmt.Sprintf("Summarizing chapter %d...", i), nil)
-		summary, err := sw.executeAgentTask(ctx, "story_summarizer", chapter)
-		if err != nil {
-			sw.sendProgress("Story Summarizer", "error", fmt.Sprintf("Failed to summarize chapter %d", i), err)
-			return fmt.Errorf("chapter %d summarization failed: %w", i, err)
-		}
-		sw.sendProgress("Story Summarizer", "completed", fmt.Sprintf("Chapter %d summarized", i), nil)
-		chapterSummaries = append(chapterSummaries, fmt.Sprintf("Chapter %d: %s", i, summary))
+		chapters[i-1] = chapter
+		sw.addCompletedTask(fmt.Sprintf("Chapter %d Written", i))
 		
-		// Save chapter summary immediately
-		summaryFilename := fmt.Sprintf("chapter_%d_summary.md", i)
-		if err := sw.saveToWorkspace(summaryFilename, fmt.Sprintf("# Chapter %d Summary\n\n%s", i, summary)); err != nil {
-			return fmt.Errorf("failed to save chapter %d summary: %w", i, err)
+		// Start summarization in parallel (if not already exists)
+		if summaryData, exists := existingData[fmt.Sprintf("chapter_%d_summary", i)]; exists {
+			// Summary already exists, extract content
+			lines := strings.Split(summaryData, "\n")
+			summary := ""
+			for j, line := range lines {
+				if strings.HasPrefix(line, "# Chapter") && strings.Contains(line, "Summary") {
+					// Skip header and empty lines
+					for k := j + 1; k < len(lines) && strings.TrimSpace(lines[k]) == ""; k++ {
+						j = k
+					}
+					if j+1 < len(lines) {
+						summary = strings.Join(lines[j+1:], "\n")
+					}
+					break
+				}
+			}
+			if summary == "" {
+				summary = summaryData // Fallback
+			}
+			chapterSummaries[i-1] = fmt.Sprintf("Chapter %d: %s", i, strings.TrimSpace(summary))
+			sw.sendProgress("Story Summarizer", "completed", fmt.Sprintf("Loaded existing chapter %d summary", i), nil)
+			
+			// Send result to channel
+			go func(idx int, sum string) {
+				summaryResults <- struct {
+					index   int
+					summary string
+					err     error
+				}{idx, sum, nil}
+			}(i-1, chapterSummaries[i-1])
+			summariesStarted++
+		} else {
+			// Start summarization in background
+			go func(chapterIndex int, chapterContent string) {
+				sw.sendProgress("Story Summarizer", "started", fmt.Sprintf("Summarizing chapter %d...", chapterIndex+1), nil)
+				summary, err := sw.executeAgentTask(ctx, "story_summarizer", chapterContent)
+				if err != nil {
+					sw.sendProgress("Story Summarizer", "error", fmt.Sprintf("Failed to summarize chapter %d", chapterIndex+1), err)
+					summaryResults <- struct {
+						index   int
+						summary string
+						err     error
+					}{chapterIndex, "", err}
+					return
+				}
+				
+				sw.sendProgress("Story Summarizer", "completed", fmt.Sprintf("Chapter %d summarized", chapterIndex+1), nil)
+				
+				// Save chapter summary
+				summaryFilename := fmt.Sprintf("chapter_%d_summary.md", chapterIndex+1)
+				if err := sw.saveToWorkspace(summaryFilename, fmt.Sprintf("# Chapter %d Summary\n\n%s", chapterIndex+1, summary)); err != nil {
+					summaryResults <- struct {
+						index   int
+						summary string
+						err     error
+					}{chapterIndex, "", err}
+					return
+				}
+				
+				formattedSummary := fmt.Sprintf("Chapter %d: %s", chapterIndex+1, strings.TrimSpace(summary))
+				summaryResults <- struct {
+					index   int
+					summary string
+					err     error
+				}{chapterIndex, formattedSummary, nil}
+			}(i-1, chapter)
+			summariesStarted++
 		}
 		
-		// Edit chapter (as per spec: once per chapter with all summaries + current chapter)
+		// Check memory pressure and compact if needed
+		if sw.memory.NeedsCompaction() {
+			sw.memory.CompactSession(sw.initialPrompt, sw.completedTasks, chapter)
+		}
+	}
+	
+	// Phase 2: Wait for all summaries to complete
+	for i := 0; i < summariesStarted; i++ {
+		result := <-summaryResults
+		if result.err != nil {
+			return fmt.Errorf("chapter %d summarization failed: %w", result.index+1, result.err)
+		}
+		chapterSummaries[result.index] = result.summary
+		sw.addCompletedTask(fmt.Sprintf("Chapter %d Summarized", result.index+1))
+	}
+	
+	// Phase 3: Edit all chapters using all summaries
+	allSummariesText := strings.Join(chapterSummaries, "\n")
+	for i := 1; i <= 9; i++ {
+		var editedChapter string
+		var err error
+		
+		// Check if edited chapter already exists (resume logic)
+		if _, exists := existingData[fmt.Sprintf("chapter_%d_edited", i)]; exists {
+			// Chapter is already edited, skip
+			sw.sendProgress("Editor", "completed", fmt.Sprintf("Loaded existing chapter %d edit", i), nil)
+			continue
+		}
+		
+		// Edit chapter with all summaries
 		sw.sendProgress("Editor", "started", fmt.Sprintf("Editing chapter %d...", i), nil)
-		editInput := fmt.Sprintf("Chapter Summaries:\n%s\n\nCurrent Chapter:\n%s", 
-			strings.Join(chapterSummaries, "\n"), chapter)
-		editedChapter, err := sw.executeAgentTask(ctx, "editor", editInput)
+		editInput := fmt.Sprintf("All Chapter Summaries:\n%s\n\nCurrent Chapter to Edit:\n%s", 
+			allSummariesText, chapters[i-1])
+		editedChapter, err = sw.executeAgentTask(ctx, "editor", editInput)
 		if err != nil {
 			sw.sendProgress("Editor", "error", fmt.Sprintf("Failed to edit chapter %d", i), err)
 			return fmt.Errorf("chapter %d editing failed: %w", i, err)
@@ -239,7 +361,7 @@ func (sw *StoryWorkflow) ExecuteStoryCreation(ctx context.Context, userPrompt st
 			return fmt.Errorf("failed to save edited chapter %d: %w", i, err)
 		}
 		
-		sw.addCompletedTask(fmt.Sprintf("Chapter %d Written and Edited", i))
+		sw.addCompletedTask(fmt.Sprintf("Chapter %d Edited", i))
 		
 		// Check memory pressure and compact if needed
 		if sw.memory.NeedsCompaction() {
@@ -344,18 +466,29 @@ func (sw *StoryWorkflow) checkWorkspaceProgress() (resumeFrom string, existingDa
 		return "characters", existingData
 	}
 	
-	// Check chapters
+	// Check chapters and summaries
 	chaptersComplete := 0
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 9; i++ {
+		// Check for edited chapter
 		if content, exists, _ := sw.loadFromWorkspace(fmt.Sprintf("chapter_%d_edited.md", i)); exists {
-			existingData[fmt.Sprintf("chapter_%d", i)] = content
+			existingData[fmt.Sprintf("chapter_%d_edited", i)] = content
 			chaptersComplete = i
 		} else {
 			break
 		}
+		
+		// Also load original chapter if it exists
+		if content, exists, _ := sw.loadFromWorkspace(fmt.Sprintf("chapter_%d.md", i)); exists {
+			existingData[fmt.Sprintf("chapter_%d", i)] = content
+		}
+		
+		// Load chapter summary if it exists
+		if content, exists, _ := sw.loadFromWorkspace(fmt.Sprintf("chapter_%d_summary.md", i)); exists {
+			existingData[fmt.Sprintf("chapter_%d_summary", i)] = content
+		}
 	}
 	
-	if chaptersComplete < 5 {
+	if chaptersComplete < 9 {
 		return fmt.Sprintf("chapter_%d", chaptersComplete+1), existingData
 	}
 	
@@ -372,7 +505,7 @@ func (sw *StoryWorkflow) CreateCompleteStory() error {
 	completeStory.WriteString("---\n\n")
 	
 	// Read and concatenate all edited chapters
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 9; i++ {
 		chapterFilename := fmt.Sprintf("chapter_%d_edited.md", i)
 		chapterContent, exists, err := sw.loadFromWorkspace(chapterFilename)
 		if err != nil {
