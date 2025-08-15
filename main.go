@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/concurrent-programming-in-go/client"
+	"github.com/concurrent-programming-in-go/router"
 	"github.com/joho/godotenv"
 	"github.com/openai/openai-go"
 )
@@ -28,17 +29,30 @@ func main() {
 
 	config := client.APIClientConfig{
 		APIKey:            apiKey,
-		RequestsPerMinute: 10, // Very low limit to see rate limiting in action
-		TokensPerMinute:   25, // Also low to demonstrate token limiting
+		RequestsPerMinute: 10,
+		TokensPerMinute:   25,
 		Logger:            logger,
 	}
 
-	apiClient := client.NewAPIClient(config)
-	defer apiClient.Close()
+	clients := make([]router.Client, 3)
+	for i := 0; i < 3; i++ {
+		clients[i] = client.NewAPIClient(config)
+	}
+
+	defer func() {
+		for _, c := range clients {
+			if apiClient, ok := c.(*client.APIClient); ok {
+				apiClient.Close()
+			}
+		}
+	}()
+
+	requestRouter := router.NewRouter(clients, logger)
 
 	ctx := context.Background()
 
-	logger.Info("Starting rate limiter demonstration",
+	logger.Info("Starting router demonstration with multiple clients",
+		"num_clients", len(clients),
 		"requests_per_minute", config.RequestsPerMinute,
 		"tokens_per_minute", config.TokensPerMinute,
 	)
@@ -52,7 +66,7 @@ func main() {
 
 	for i := 1; i <= 6; i++ {
 		start := time.Now()
-		resp, err := apiClient.CreateChatCompletion(ctx, req)
+		resp, err := requestRouter.CreateChatCompletion(ctx, req)
 		duration := time.Since(start)
 
 		if err != nil {
@@ -70,5 +84,5 @@ func main() {
 		}
 	}
 
-	logger.Info("Rate limiter demonstration completed")
+	logger.Info("Router demonstration completed")
 }

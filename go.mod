@@ -7,6 +7,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/openai/openai-go v1.12.0
 	github.com/pkoukk/tiktoken-go v0.1.7
+	github.com/taigrr/animals v0.0.1
+	github.com/taigrr/colorhash v0.5.0
 )
 
 require (
