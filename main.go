@@ -28,8 +28,8 @@ func main() {
 
 	config := client.APIClientConfig{
 		APIKey:            apiKey,
-		RequestsPerMinute: 10,   // Very low limit to see rate limiting in action
-		TokensPerMinute:   1000, // Also low to demonstrate token limiting
+		RequestsPerMinute: 10, // Very low limit to see rate limiting in action
+		TokensPerMinute:   25, // Also low to demonstrate token limiting
 		Logger:            logger,
 	}
 
@@ -50,7 +50,7 @@ func main() {
 		Model: openai.ChatModelGPT4oMini,
 	}
 
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 6; i++ {
 		start := time.Now()
 		resp, err := apiClient.CreateChatCompletion(ctx, req)
 		duration := time.Since(start)
