@@ -60,7 +60,7 @@ func (r *REPL) Start(ctx context.Context) {
 
 func (r *REPL) handleQuery(ctx context.Context, query string) {
 	fmt.Printf("🔍 Searching for articles related to: %s\n", query)
-	
+
 	// Search for relevant articles
 	articles, err := r.pipeline.SearchArticles(ctx, query, 5)
 	if err != nil {
@@ -74,7 +74,7 @@ func (r *REPL) handleQuery(ctx context.Context, query string) {
 	}
 
 	fmt.Printf("📚 Found %d relevant articles:\n\n", len(articles))
-	
+
 	// Display articles
 	for i, article := range articles {
 		fmt.Printf("%d. 📰 %s\n", i+1, article.Title)

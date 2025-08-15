@@ -42,9 +42,9 @@ type Article struct {
 }
 
 type WeaviateClass struct {
-	Class      string              `json:"class"`
-	Properties []WeaviateProperty  `json:"properties"`
-	Vectorizer string              `json:"vectorizer"`
+	Class      string             `json:"class"`
+	Properties []WeaviateProperty `json:"properties"`
+	Vectorizer string             `json:"vectorizer"`
 }
 
 type WeaviateProperty struct {
@@ -53,22 +53,22 @@ type WeaviateProperty struct {
 }
 
 type WeaviateObject struct {
-	Class      string                 `json:"class"`
-	Properties map[string]interface{} `json:"properties"`
-	Vector     []float32              `json:"vector,omitempty"`
+	Class      string         `json:"class"`
+	Properties map[string]any `json:"properties"`
+	Vector     []float32      `json:"vector,omitempty"`
 }
 
 type WeaviateSearchResponse struct {
 	Data struct {
-		Get map[string][]map[string]interface{} `json:"Get"`
+		Get map[string][]map[string]any `json:"Get"`
 	} `json:"data"`
 }
 
 // ProgressReader wraps an io.Reader and displays download progress
 type ProgressReader struct {
-	Reader io.Reader
-	Total  int64
-	read   int64
+	Reader      io.Reader
+	Total       int64
+	read        int64
 	lastPercent int
 }
 
@@ -76,16 +76,16 @@ type ProgressReader struct {
 func (pr *ProgressReader) Read(p []byte) (int, error) {
 	n, err := pr.Reader.Read(p)
 	pr.read += int64(n)
-	
+
 	// Calculate percentage
 	percent := int(float64(pr.read) / float64(pr.Total) * 100)
-	
+
 	// Only update progress bar every 5% to avoid spam
 	if percent != pr.lastPercent && percent%5 == 0 {
 		pr.lastPercent = percent
 		pr.displayProgress(percent)
 	}
-	
+
 	return n, err
 }
 
@@ -93,9 +93,9 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 func (pr *ProgressReader) displayProgress(percent int) {
 	barWidth := 40
 	filledWidth := percent * barWidth / 100
-	
+
 	bar := "["
-	for i := 0; i < barWidth; i++ {
+	for i := range barWidth {
 		if i < filledWidth {
 			bar += "="
 		} else {
@@ -103,12 +103,12 @@ func (pr *ProgressReader) displayProgress(percent int) {
 		}
 	}
 	bar += "]"
-	
-	fmt.Printf("\r📥 Downloading: %s %d%% (%.1f MB / %.1f MB)", 
-		bar, percent, 
-		float64(pr.read)/1024/1024, 
+
+	fmt.Printf("\r📥 Downloading: %s %d%% (%.1f MB / %.1f MB)",
+		bar, percent,
+		float64(pr.read)/1024/1024,
 		float64(pr.Total)/1024/1024)
-	
+
 	if percent >= 100 {
 		fmt.Println() // New line when complete
 	}
@@ -221,7 +221,7 @@ func downloadWeaviateBinary(dataDir string) (string, error) {
 	fmt.Printf("📥 Downloading Weaviate binary v%s for %s/%s...\n", WeaviateVersion, runtime.GOOS, arch)
 
 	// Download URL for Weaviate binary
-	downloadURL := fmt.Sprintf("https://github.com/weaviate/weaviate/releases/download/v%s/weaviate-v%s-linux-%s.tar.gz", 
+	downloadURL := fmt.Sprintf("https://github.com/weaviate/weaviate/releases/download/v%s/weaviate-v%s-linux-%s.tar.gz",
 		WeaviateVersion, WeaviateVersion, arch)
 
 	// Download the tar.gz file with progress bar
@@ -306,7 +306,7 @@ func extractWeaviateBinary(reader io.Reader, dataDir, binaryName string) error {
 
 func (w *WeaviateDB) waitForReady(ctx context.Context) error {
 	fmt.Println("⏳ Waiting for Weaviate to be ready...")
-	
+
 	timeout := time.After(60 * time.Second)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -377,7 +377,7 @@ func (w *WeaviateDB) createSchema(ctx context.Context) error {
 func (w *WeaviateDB) StoreArticle(ctx context.Context, article *Article) error {
 	obj := WeaviateObject{
 		Class: ArticleClassName,
-		Properties: map[string]interface{}{
+		Properties: map[string]any{
 			"title":           article.Title,
 			"description":     article.Description,
 			"summary":         article.Summary,
@@ -410,6 +410,82 @@ func (w *WeaviateDB) StoreArticle(ctx context.Context, article *Article) error {
 	}
 
 	return nil
+}
+
+func (w *WeaviateDB) SearchByTitle(ctx context.Context, title string) (*Article, error) {
+	query := fmt.Sprintf(`{
+		Get {
+			%s(
+				where: {
+					path: ["title"]
+					operator: Equal
+					valueText: "%s"
+				}
+				limit: 1
+			) {
+				title
+				description
+				summary
+				link
+				publicationDate
+			}
+		}
+	}`, ArticleClassName, strings.ReplaceAll(title, `"`, `\"`))
+
+	reqBody := map[string]string{"query": query}
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal query: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", w.baseURL+"/graphql", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search by title: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("title search failed, status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var searchResp WeaviateSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if articleList, ok := searchResp.Data.Get[ArticleClassName]; ok && len(articleList) > 0 {
+		item := articleList[0]
+		article := &Article{}
+
+		if title, ok := item["title"].(string); ok {
+			article.Title = title
+		}
+		if description, ok := item["description"].(string); ok {
+			article.Description = description
+		}
+		if summary, ok := item["summary"].(string); ok {
+			article.Summary = summary
+		}
+		if link, ok := item["link"].(string); ok {
+			article.Link = link
+		}
+		if pubDate, ok := item["publicationDate"].(string); ok {
+			if parsedDate, err := time.Parse(time.RFC3339, pubDate); err == nil {
+				article.PublicationDate = parsedDate
+			}
+		}
+
+		return article, nil
+	}
+
+	return nil, nil
 }
 
 func (w *WeaviateDB) SearchSimilar(ctx context.Context, queryVector []float32, limit int) ([]*Article, error) {
@@ -463,7 +539,7 @@ func (w *WeaviateDB) SearchSimilar(ctx context.Context, queryVector []float32, l
 	if articleList, ok := searchResp.Data.Get[ArticleClassName]; ok {
 		for _, item := range articleList {
 			article := &Article{}
-			
+
 			if title, ok := item["title"].(string); ok {
 				article.Title = title
 			}
@@ -481,7 +557,7 @@ func (w *WeaviateDB) SearchSimilar(ctx context.Context, queryVector []float32, l
 					article.PublicationDate = parsedDate
 				}
 			}
-			
+
 			articles = append(articles, article)
 		}
 	}

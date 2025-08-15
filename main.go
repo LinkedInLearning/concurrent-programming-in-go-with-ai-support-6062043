@@ -33,6 +33,7 @@ type ProcessingResult struct {
 	Article *vectordb.Article
 	Index   int
 	Error   error
+	Skipped bool
 }
 
 func main() {
@@ -69,7 +70,7 @@ func main() {
 	feedProcessor := rss.NewFeedProcessor()
 	embeddingService := embedding.NewEmbeddingService(openaiAPIKey)
 	summarizerService := summarizer.NewSummarizer(openaiAPIKey)
-	
+
 	vectorDB, err := vectordb.NewWeaviateDB(ctx)
 	if err != nil {
 		log.Fatalf("❌ Failed to initialize vector database: %v", err)
@@ -100,10 +101,10 @@ func main() {
 	}
 
 	log.Println("🎉 Processing complete! Starting REPL...")
-	
+
 	// Start REPL
 	p := pipeline.NewPipeline(embeddingService, summarizerService, vectorDB)
-	
+
 	r := repl.NewREPL(p)
 	r.Start(ctx)
 }
@@ -114,7 +115,7 @@ func processItemsWithWorkerPool(ctx context.Context, items []*rss.FeedItem, embe
 
 	// Start workers
 	var wg sync.WaitGroup
-	for i := 0; i < WorkerCount; i++ {
+	for i := range WorkerCount {
 		wg.Add(1)
 		go worker(ctx, i+1, jobs, results, embeddingService, summarizerService, vectorDB, &wg)
 	}
@@ -135,29 +136,45 @@ func processItemsWithWorkerPool(ctx context.Context, items []*rss.FeedItem, embe
 
 	successCount := 0
 	errorCount := 0
+	skippedCount := 0
 
 	for result := range results {
 		if result.Error != nil {
 			log.Printf("❌ Worker failed to process item %d: %v", result.Index, result.Error)
 			errorCount++
+		} else if result.Skipped {
+			skippedCount++
 		} else {
 			log.Printf("✅ Successfully processed item %d/%d: %s", result.Index, len(items), result.Article.Title)
 			successCount++
 		}
 	}
 
-	log.Printf("📈 Processing summary: %d successful, %d failed", successCount, errorCount)
+	log.Printf("📈 Processing summary: %d successful, %d skipped (duplicates), %d failed", successCount, skippedCount, errorCount)
 	return nil
 }
 
 func worker(ctx context.Context, workerID int, jobs <-chan ProcessingJob, results chan<- ProcessingResult, embeddingService *embedding.EmbeddingService, summarizerService *summarizer.Summarizer, vectorDB *vectordb.WeaviateDB, wg *sync.WaitGroup) {
 	defer wg.Done()
-	
+
 	log.Printf("🔧 Worker %d started", workerID)
-	
+
 	for job := range jobs {
 		log.Printf("🔄 Worker %d processing item %d: %s", workerID, job.Index, job.Item.Title)
-		
+
+		// Check for duplicates first
+		existingArticle, err := vectorDB.SearchByTitle(ctx, job.Item.Title)
+		if err != nil {
+			results <- ProcessingResult{Index: job.Index, Error: fmt.Errorf("failed to check for duplicates: %w", err)}
+			continue
+		}
+
+		if existingArticle != nil {
+			log.Printf("⏭️  Worker %d skipping duplicate item %d: %s", workerID, job.Index, job.Item.Title)
+			results <- ProcessingResult{Index: job.Index, Skipped: true}
+			continue
+		}
+
 		// Generate summary
 		summary, err := summarizerService.Summarize(ctx, job.Item.Title, job.Item.Description)
 		if err != nil {
@@ -190,13 +207,13 @@ func worker(ctx context.Context, workerID int, jobs <-chan ProcessingJob, result
 
 		results <- ProcessingResult{Article: article, Index: job.Index, Error: nil}
 	}
-	
+
 	log.Printf("🏁 Worker %d finished", workerID)
 }
 
 func promptForFeedURL() string {
 	scanner := bufio.NewScanner(os.Stdin)
-	
+
 	fmt.Println("📰 Popular RSS Feeds:")
 	fmt.Println("  1. O'Reilly Radar: https://feeds.feedburner.com/oreilly/radar")
 	fmt.Println("  2. Hacker News: https://hnrss.org/frontpage")
@@ -204,22 +221,22 @@ func promptForFeedURL() string {
 	fmt.Println("  4. Ars Technica: http://feeds.arstechnica.com/arstechnica/index")
 	fmt.Println("  5. The Verge: https://www.theverge.com/rss/index.xml")
 	fmt.Println()
-	
+
 	for {
 		fmt.Print("🔗 Enter RSS feed URL (or number 1-5): ")
-		
+
 		if !scanner.Scan() {
 			fmt.Println("\n👋 Goodbye!")
 			os.Exit(0)
 		}
-		
+
 		input := strings.TrimSpace(scanner.Text())
-		
+
 		if input == "" {
 			fmt.Println("⚠️  Please enter a valid URL or number.")
 			continue
 		}
-		
+
 		// Handle numbered options
 		switch input {
 		case "1":
