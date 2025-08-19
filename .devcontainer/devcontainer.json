@@ -1,9 +1,13 @@
 {
+  "name": "Go",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {}
+  },
+  "runArgs": ["--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"],
   "customizations": {
     "codespaces": {
-      "openFiles": [
-        "README.md"
-      ]
+      "openFiles": ["README.md"]
     },
     "vscode": {
       // Set *default* container specific settings.json values on container create.
@@ -14,16 +18,24 @@
       "extensions": [
         "linkedinlearning.linkedinlearning-vscode-theme",
         "esbenp.prettier-vscode",
-        "dbaeumer.vscode-eslint",
-        "ritwickdey.LiveServer",
+        "golang.Go",
+        "golang.go",
         "stylelint.vscode-stylelint"
         // Additional Extensions Here
-      ]
+      ],
+      "mcp": {
+        "servers": {
+          "context7": {
+            "url": "https://mcp.context7.com/mcp",
+            "type": "http"
+          }
+        }
+      }
     }
   },
   // Update welcome text and set terminal prompt to '$ '
   "onCreateCommand": "echo PS1='\"$ \"' >> ~/.bashrc",
   // Pull all branches
-  "postAttachCommand": "git pull --all"
+  "postAttachCommand": "bash .devcontainer/setup.sh"
 }
 // DevContainer Reference: https://code.visualstudio.com/docs/remote/devcontainerjson-reference
